@@ -1,0 +1,29 @@
+{
+  "name": "snub-ws",
+  "version": "1.0.0",
+  "description": "WebSocket server middleware for snub",
+  "main": "snub-ws.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cokeeffekt/snub-ws.git"
+  },
+  "keywords": [
+    "redis",
+    "websocket"
+  ],
+  "author": "Patrik Hartwig",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/cokeeffekt/snub-ws/issues"
+  },
+  "homepage": "https://github.com/cokeeffekt/snub-ws#readme",
+  "dependencies": {
+    "uws": "^0.14.1"
+  },
+  "devDependencies": {
+    "snub": "^1.0.5"
+  }
+}

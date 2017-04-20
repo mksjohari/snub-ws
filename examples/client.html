@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>Document</title>
+  <script src="snub-ws-client.js"></script>
+  <script>
+    var i = 10;
+    var conns = [];
+    while (i > 0) {
+      ((it) => {
+        var snub = new snubWs('ws://username:password@localhost:8585');
+        snub.on('connect', function () {
+          console.log('Connected snub' + it);
+
+          setTimeout(() => {
+            snub.send('do-math', [2, 3, 4, 5], function (response) {
+              console.log('snub' + it + ' math =>', response);
+            });
+          }, 1000);
+        });
+        conns.push(snub);
+      })(i);
+
+      i--;
+    }
+
+    function whoOnline() {
+      conns.filter(c => c.connected == true)[0].send('whos-online', null, function (response) {
+        console.log(response);
+      });
+    }
+  </script>
+</head>
+
+<body>
+  Open console log for output.
+</body>
+
+</html>
