@@ -22,7 +22,6 @@ var snubWs = function (path, config) {
   var autoReconnect = config.autoReconnect;
   var connectionAttemps = 0;
   this.id = null;
-  this.metadata = null;
   var connection;
   if (config.initConnect !== false)
     connect.apply(this);
@@ -76,7 +75,7 @@ var snubWs = function (path, config) {
 
   this.send = function (event, payload, reply) {
     if (connection && connection.readyState <= 1) {
-      var replyId = false
+      var replyId = false;
       if (typeof reply == 'function') {
         replyId = '_reply:' + generateUID();
         this.on(replyId, reply, true);
@@ -96,6 +95,7 @@ var snubWs = function (path, config) {
     };
     connection.onclose = function () {
       trigger('disconnected');
+      console.log(connection);
       connectionAttemps++;
       setTimeout(() => {
         if (autoReconnect)
@@ -105,14 +105,9 @@ var snubWs = function (path, config) {
     connection.onerror = function (error) {
       trigger('error', [error]);
     };
-    window.addEventListener("beforeunload", () => {
-      connection.close();
-    });
     var libReserved = {
       _acceptAuth: (data) => {
-        this.id = data.id;
-        this.metadata = data.metadata;
-
+        this.id = data;
         trigger('connect', [data]);
         connectionAttemps = 0;
       },

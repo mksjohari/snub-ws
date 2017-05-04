@@ -6,8 +6,8 @@ const SnubWS = require('../snub-ws.js');
 
 const snubws = new SnubWS({
   debug: true,
-  mutliLogin: false,
-  auth: function (auth, accept, deny) {
+  mutliLogin: true,
+  auth: 'authenticate-client' || function (auth, accept, deny) {
     if (auth.username == 'username') return accept();
     deny();
   }
@@ -19,6 +19,11 @@ snub.use(snubws);
 //   console.log(arguments);
 // });
 
+snub.on('ws:authenticate-client', function (auth, reply) {
+  if (auth.username == 'username') return reply(true);
+  reply(false);
+});
+
 snub.on('ws:client-authenticated', function (payload) {
   // we can send a message to a single user.
   // this will work with polly but every snub instance will send the message to the client, not alway desired.
@@ -27,6 +32,7 @@ snub.on('ws:client-authenticated', function (payload) {
 });
 
 snub.on('ws:do-math', function (event, reply) {
+  console.log('domath');
   // if the event for the client is expecting a reply we can do so.
   if (typeof reply == 'function')
     reply(process.pid + '=' + event.payload.reduce((p, c) => {
@@ -34,14 +40,52 @@ snub.on('ws:do-math', function (event, reply) {
     }, 0));
 });
 
+snub.on('ws:broadcast', function (event) {
+
+  snub.poly('ws:get-client', event.from.id).replyAt(userInfo => {
+    console.log(userInfo);
+  }).send();
+
+  snub.poly('ws:add-channel:' + event.from.id, 'channel1').replyAt(user => {
+    console.log('ADD USER CHANNEL=>', user);
+
+    snub.poly('ws:set-channel:' + event.from.id, ['channel2', 'channel3']).replyAt(user => {
+      console.log('SET USER CHANNEL=>', user);
+
+      snub.poly('ws:del-channel:' + event.from.id, 'channel2').replyAt(user => {
+        console.log('DEL USER CHANNEL=>', user);
+
+        snub.poly('ws:send-channel:channel3', ['channel3', 'channel3 message']).send();
+
+      }).send();
+    }).send();
+  }).send();
+
+  snub.poly('ws:send-all', ['hull0', 'derka?']).send();
+});
+
 snub.on('ws:whos-online', function (event, reply) {
   var c = [];
-  setTimeout(() => {
-    reply(c.map(cu => cu.id));
-  }, 2000);
+  // when c is fully populated we are going to need to send it
+  var sendReply = () => {
+    var r = [].concat(...c).map(cu => cu.id);
+    reply(r);
+  };
+
+  // force sendtimeout
+  var sendTimeout = setTimeout(sendReply, 4500);
+
+  // set a instance count higher than will ever be required
+  var count = 10;
   snub.poly('ws:connected-clients').replyAt(connected => {
-    c = c.concat(connected);
-  }).send();
+    c.push(connected);
+    if (count === c.length) {
+      clearTimeout(sendTimeout);
+      sendReply();
+    }
+  }, 6000).send(listenCount => {
+    count = listenCount;
+  });
 });
 
 

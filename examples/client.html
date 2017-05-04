@@ -15,12 +15,20 @@
         var snub = new snubWs('ws://username:password@localhost:8585');
         snub.on('connect', function () {
           console.log('Connected snub' + it);
+          snub.send('snub' + it, 2);
 
-          setTimeout(() => {
-            snub.send('do-math', [2, 3, 4, 5], function (response) {
-              console.log('snub' + it + ' math =>', response);
-            });
-          }, 1000);
+          snub.send('do-math', [2, 3, 4, 5], function (response) {
+            console.log('snub' + it + ' math =>', response);
+          });
+        });
+        snub.on('disconnected', function (message) {
+          console.log('snub' + it + ' => disconnected');
+        });
+        snub.on('hull0', function (message) {
+          console.log('got msg' + it + ' => ' + message);
+        });
+        snub.on('channel3', function (message) {
+          console.log('got msg' + it + ' => ' + message);
         });
         conns.push(snub);
       })(i);
@@ -32,6 +40,10 @@
       conns.filter(c => c.connected == true)[0].send('whos-online', null, function (response) {
         console.log(response);
       });
+    }
+
+    function broadcast() {
+      conns.filter(c => c.connected == true)[0].send('broadcast', 'wullo wallo');
     }
   </script>
 </head>
