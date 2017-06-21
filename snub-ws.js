@@ -10,7 +10,8 @@ module.exports = function (config) {
     },
     debug: false,
     mutliLogin: true,
-    authTimeout: 3000
+    authTimeout: 3000,
+    throttle: [50, 5000] // X number of messages per Y milliseconds.
   }, config || {});
 
   return function (snub) {
@@ -25,7 +26,7 @@ module.exports = function (config) {
     var socketClients = [];
 
     wss.on('connection', (ws) => {
-      var clientConn = new clientConnection(ws, config.auth);
+      var clientConn = new ClientConnection(ws, config.auth);
       socketClients.push(clientConn);
       if (config.debug)
         console.log('Snub WS Client Connected => ' + clientConn.id);
@@ -157,7 +158,7 @@ module.exports = function (config) {
       return firstPart + secondPart;
     }
 
-    function clientConnection(ws, authFunction) {
+    function ClientConnection(ws, authFunction) {
       var upgradeUrl = url.parse(ws.upgradeReq.url);
 
       Object.assign(this, {
@@ -167,7 +168,8 @@ module.exports = function (config) {
         channels: [],
         connected: true,
         authenticated: false,
-        connectTime: Date.now()
+        connectTime: Date.now(),
+        recent: []
       });
 
       Object.defineProperty(this, 'state', {
@@ -259,9 +261,18 @@ module.exports = function (config) {
             return libReserved[event](data);
           }
           if (!this.authenticated) return;
+
+          if (config.throttle) {
+            this.recent = this.recent.filter(ts => ts > Date.now() - config.throttle[1]);
+            if (this.recent > config.throttle[0])
+              this.kick('Message throttle');
+            this.recent.push(Date.now());
+          }
+
           snub.mono('ws:' + event, {
               from: this.state,
-              payload: data
+              payload: data,
+              _ts: Date.now()
             })
             .replyAt((reply ? data => {
               this.send(reply, data);
