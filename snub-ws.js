@@ -264,8 +264,8 @@ module.exports = function (config) {
 
           if (config.throttle) {
             this.recent = this.recent.filter(ts => ts > Date.now() - config.throttle[1]);
-            if (this.recent > config.throttle[0])
-              this.kick('Message throttle');
+            if (this.recent.length > config.throttle[0])
+              this.kick('Throttle limit hit');
             this.recent.push(Date.now());
           }
 
