@@ -11,6 +11,7 @@ module.exports = function (config) {
     debug: false,
     mutliLogin: true,
     authTimeout: 3000,
+    obfuscate: false,
     throttle: [50, 5000] // X number of messages per Y milliseconds.
   }, config || {});
 
@@ -187,7 +188,7 @@ module.exports = function (config) {
 
       this.send = function (event, payload) {
         if ((this.connected && this.authenticated) || event == '_kickConnection')
-          ws.send(JSON.stringify([event, payload]));
+          ws.send(obsString([event, payload], config.obfuscate));
       };
 
       this.close = function () {
@@ -251,7 +252,7 @@ module.exports = function (config) {
 
       ws.on('message', e => {
         try {
-          var [event, data, reply] = JSON.parse(e);
+          var [event, data, reply] = obsParse(e);
 
           //block client messages
           if (['send-all', 'connected-clients', 'client-authenticated', 'client-failedauth'].includes(event) || event.match(/^(send|kick|client-attributes)\:/))
@@ -291,6 +292,37 @@ module.exports = function (config) {
       });
     }
   };
-
-
 };
+
+function obsParse(str) {
+  var isOb = false;
+  if (str.match(/^~~/igm)) {
+    isOb = true;
+    str = str.replace(/^~~/igm, '');
+  }
+  if (isOb) {
+    var charcode;
+    var result = '';
+    for (var i = 0; i < str.length; i++) {
+      charcode = (str[i].charCodeAt()) + (str.length * -1);
+      result += String.fromCharCode(charcode);
+    }
+    str = result;
+  }
+
+  return JSON.parse(str);
+}
+
+function obsString(value, obs) {
+  var str = JSON.stringify(value);
+  if (!obs)
+    return str;
+  var charcode;
+  var result = '';
+  for (var i = 0; i < str.length; i++) {
+    charcode = (str[i].charCodeAt()) + str.length;
+    result += String.fromCharCode(charcode);
+  }
+  str = result;
+  return '~~' + str;
+}
