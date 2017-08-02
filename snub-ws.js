@@ -160,7 +160,12 @@ module.exports = function (config) {
     }
 
     function ClientConnection(ws, authFunction) {
-      var upgradeUrl = url.parse(ws.upgradeReq.url);
+      var wsMeta = {
+        url: ws.upgradeReq.url,
+        origin: ws.upgradeReq.headers.origin,
+        host: ws.upgradeReq.headers.host,
+        remoteAddress: ws.upgradeReq.headers['x-forwarded-for'] || ws._socket.remoteAddress
+      };
 
       Object.assign(this, {
         id: process.pid + '-' + generateUID(),
@@ -237,7 +242,7 @@ module.exports = function (config) {
           }, config.authTimeout);
 
           if (typeof authFunction == 'string')
-            snub.mono('ws:' + authFunction, this.auth).replyAt(payload => {
+            snub.mono('ws:' + authFunction, Object.assign({}, data, wsMeta)).replyAt(payload => {
               if (payload === true)
                 return acceptAuth();
               denyAuth();
@@ -246,7 +251,7 @@ module.exports = function (config) {
                 denyAuth();
             });
           if (typeof authFunction == 'function')
-            authFunction(data, acceptAuth, denyAuth);
+            authFunction(Object.assign({}, data, wsMeta), acceptAuth, denyAuth);
         }
       };
 

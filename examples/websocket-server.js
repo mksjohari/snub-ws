@@ -20,6 +20,7 @@ snub.use(snubws);
 // });
 
 snub.on('ws:authenticate-client', function (auth, reply) {
+  console.log(auth);
   if (auth.username == 'username') return reply(true);
   reply(false);
 });

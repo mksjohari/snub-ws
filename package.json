@@ -1,6 +1,6 @@
 {
   "name": "snub-ws",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "WebSocket server middleware for snub",
   "main": "snub-ws.js",
   "scripts": {
