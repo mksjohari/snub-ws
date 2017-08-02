@@ -86,7 +86,7 @@ module.exports = function (config) {
         }
         return false;
       }).map(client => client.state);
-      if (clients.length > 0)
+      if (clients.length > 0 && reply)
         reply(clients);
     });
     snub.on('ws:set-channel:*', function (arrayOfChannels, reply, channel) {
@@ -99,7 +99,7 @@ module.exports = function (config) {
         }
         return false;
       }).map(client => client.state);
-      if (clients.length > 0)
+      if (clients.length > 0 && reply)
         reply(clients);
     });
     snub.on('ws:del-channel:*', function (arrayOfChannels, reply, channel) {
@@ -112,7 +112,7 @@ module.exports = function (config) {
         }
         return false;
       }).map(client => client.state);
-      if (clients.length > 0)
+      if (clients.length > 0 && reply)
         reply(clients);
     });
 
