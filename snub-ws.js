@@ -133,7 +133,7 @@ module.exports = function (config) {
       if (config.mutliLogin === false)
         socketClients.forEach(client => {
           if (client.state.username == connectedClient.username && client.state.id != connectedClient.id && client.connectTime < connectedClient.connectTime) {
-            return client.kick('Duplicate Login');
+            return client.kick('DUPE_LOGIN');
           }
           return false;
         });
@@ -226,7 +226,7 @@ module.exports = function (config) {
 
       };
       var denyAuth = () => {
-        this.kick('Authenication failed');
+        this.kick('AUTH_FAIL');
         setTimeout(this.close, 100);
         snub.mono('ws:client-failedauth', this.state).send();
         if (config.debug)
@@ -238,7 +238,7 @@ module.exports = function (config) {
         _auth: (data) => {
           this.auth = data || {};
           authTimeout = setTimeout(() => {
-            this.kick('Authenication timeout');
+            this.kick('AUTH_TIMEOUT');
           }, config.authTimeout);
 
           if (typeof authFunction == 'string')
@@ -271,7 +271,7 @@ module.exports = function (config) {
           if (config.throttle) {
             this.recent = this.recent.filter(ts => ts > Date.now() - config.throttle[1]);
             if (this.recent.length > config.throttle[0])
-              this.kick('Throttle limit hit.');
+              this.kick('THROTTLE_LIMIT');
             this.recent.push(Date.now());
           }
 
