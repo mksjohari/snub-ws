@@ -283,7 +283,12 @@ module.exports = function (config) {
             .replyAt((reply ? data => {
               this.send(reply, data);
             } : undefined))
-            .send();
+            .send(c => {
+              if (c < 1 && reply)
+                this.send(reply + ':error', {
+                  error: 'Nothing was listening to this event'
+                });
+            });
         } catch (err) {
           console.log(err);
         }
