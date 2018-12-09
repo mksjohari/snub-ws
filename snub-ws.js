@@ -164,7 +164,7 @@ module.exports = function (config) {
         url: ws.upgradeReq.url,
         origin: ws.upgradeReq.headers.origin,
         host: ws.upgradeReq.headers.host,
-        remoteAddress: ws.upgradeReq.headers['x-forwarded-for'] || ws._socket.remoteAddress
+        remoteAddress: ws.upgradeReq.headers['x-real-ip'] || ws.upgradeReq.headers['x-forwarded-for'] || ws._socket.remoteAddress
       };
 
       Object.assign(this, {
