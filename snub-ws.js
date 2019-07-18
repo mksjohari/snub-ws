@@ -1,6 +1,6 @@
 const querystring = require('querystring');
 const url = require('url');
-const uws = require('uws');
+const { WebSocketServer } = require('@clusterws/cws');
 
 module.exports = function (config) {
   config = Object.assign({
@@ -17,7 +17,6 @@ module.exports = function (config) {
 
   return function (snub) {
 
-    var WebSocketServer = uws.Server;
     var wss = new WebSocketServer({
       port: config.port
     }, () => {
