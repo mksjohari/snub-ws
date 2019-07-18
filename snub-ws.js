@@ -25,7 +25,8 @@ module.exports = function (config) {
     });
     var socketClients = [];
 
-    wss.on('connection', (ws) => {
+    wss.on('connection', (ws, upGr) => {
+      ws.upgradeReq = upGr;
       var clientConn = new ClientConnection(ws, config.auth);
       socketClients.push(clientConn);
       if (config.debug)
