@@ -1,6 +1,6 @@
 const querystring = require('querystring');
 const url = require('url');
-const uws = require('uws-light');
+const uws = require('uws');
 
 module.exports = function (config) {
   config = Object.assign({

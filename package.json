@@ -21,7 +21,7 @@
   },
   "homepage": "https://github.com/cokeeffekt/snub-ws#readme",
   "dependencies": {
-    "uws-light": "^0.22.0"
+    "uws": "git+ssh://git@github.com:discordjs/uws.git"
   },
   "devDependencies": {
     "snub": "^1.0.9"
