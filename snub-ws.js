@@ -1,3 +1,4 @@
+// const JSONH = require('jsonh');
 const { WebSocketServer } = require('@clusterws/cws');
 
 module.exports = function (config) {
@@ -7,14 +8,10 @@ module.exports = function (config) {
     debug: false,
     mutliLogin: true,
     authTimeout: 3000,
-    obfuscate: false,
-    throttle: [50, 5000] // X number of messages per Y milliseconds.
+    throttle: [50, 5000], // X number of messages per Y milliseconds.
+    idleTimeout: 1000 * 60 * 60, // disconnect if nothing has come from server in x ms 1 hour default
+    error: _ => {}
   }, config || {});
-
-  // dont think we really need this
-  // function (auth, accept, deny) {
-  //   accept();
-  // }
 
   return function (snub) {
     var wss = new WebSocketServer({
@@ -37,7 +34,6 @@ module.exports = function (config) {
 
     snub.on('ws:send-all', function (payload) {
       socketClients.forEach(client => {
-        if (!client.state.canSend) return;
         client.send(...payload);
       });
     });
@@ -59,7 +55,6 @@ module.exports = function (config) {
       var [event, ePayload] = payload;
 
       socketClients.forEach(client => {
-        if (!client.state.canSend) return;
         if (sendTo.includes(client.state.id) || sendTo.includes(client.state.username))
           client.send(event, ePayload);
       });
@@ -68,12 +63,32 @@ module.exports = function (config) {
     snub.on('ws:send-channel:*', function (payload, n1, channel) {
       var channels = channel.split(':').pop().split(',');
       var [event, ePayload] = payload;
-      // TODO why do this twice ??
       socketClients.forEach(client => {
-        if (!client.state.canSend) return;
         if (channels.some(channel => client.state.channels.includes(channel)))
           client.send(event, ePayload);
       });
+    });
+
+    snub.on('ws:set-meta:*', function (metaObj, reply, channel) {
+      Object.keys(metaObj).forEach(k => {
+        if (Array.isArray(metaObj[k]))
+          return (metaObj[k] = metaObj[k].filter(i => {
+            return (['number', 'string'].includes(typeof i) && String(i).length < 64);
+          }).slice(0, 64));
+        if (['number', 'string'].includes(typeof metaObj[k]) && String(metaObj[k]).length > 128)
+          return (delete metaObj[k]);
+        if (typeof metaObj[k] === 'object')
+          return (delete metaObj[k]);
+      });
+
+      var clients = channel.split(':').pop().split(',');
+      clients = socketClients.filter(client => {
+        if (!clients.includes(client.state.id) && !clients.includes(client.state.username)) return false;
+        Object.assign(client.metaObj, metaObj);
+        return true;
+      }).map(client => client.state);
+      if (clients.length > 0 && reply)
+        reply(clients);
     });
 
     // add, set and delet channels for a client
@@ -124,17 +139,11 @@ module.exports = function (config) {
       // if mutliLogin is on then we need to kick other clients with the same username.
       if (config.mutliLogin === false)
         socketClients.forEach(client => {
-          if (client.state.username === connectedClient.username && client.state.id != connectedClient.id && client.connectTime < connectedClient.connectTime) {
+          if (client.state.username === connectedClient.username && client.state.id !== connectedClient.id && client.connectTime < connectedClient.connectTime) {
             return client.kick('DUPE_LOGIN');
           }
           return false;
         });
-    });
-
-    snub.on('ws_internal:client-disconnected', function (s) {
-      var fi = socketClients.findIndex(c => c.id === s.id);
-      if (fi > -1)
-        socketClients.splice(fi, 1);
     });
 
     snub.on('ws:connected-clients', function (nil, reply, channel) {
@@ -155,12 +164,41 @@ module.exports = function (config) {
       return firstPart + secondPart;
     }
 
+    var cleanDeadDebounce = false;
+    function cleanUpDeadSockets () {
+      if (cleanDeadDebounce) return;
+      cleanDeadDebounce = true;
+      setTimeout(_ => {
+        cleanDeadDebounce = false;
+      }, 5000);
+      socketClients.forEach((client, idx) => {
+        let kill = false;
+
+        if (this.dead)
+          kill = 'DEAD_SOCKET';
+
+        if (client.lastMsgTime < Date.now() - config.idleTimeout)
+          kill = 'IDLE_TIMEOUT';
+
+        if (client.connectTime < Date.now() - 1000 * 60 && !client.authenticated)
+          kill = 'AUTH_FAIL';
+
+        if (!kill) return;
+        if (client.close)
+          return client.close();
+        if (client.ws && client.ws.terminate)
+          client.ws.terminate();
+        socketClients.splice(idx, 1);
+      });
+    }
+
     function ClientConnection (ws) {
+      // console.log(ws.upgradeReq.url);
       var wsMeta = {
         url: ws.upgradeReq.url,
         origin: ws.upgradeReq.headers.origin,
         host: ws.upgradeReq.headers.host,
-        remoteAddress: ws.upgradeReq.headers['x-real-ip'] || ws.upgradeReq.headers['x-forwarded-for'] || ws._socket.remoteAddress
+        remoteAddress: ws.upgradeReq.headers['x-real-ip'] || ws.upgradeReq.headers['x-forwarded-for'] || ws._socket.remoteAddress,
       };
 
       Object.assign(this, {
@@ -171,7 +209,9 @@ module.exports = function (config) {
         connected: true,
         authenticated: false,
         connectTime: Date.now(),
-        recent: []
+        recent: [],
+        lastMsgTime: Date.now(),
+        metaObj: {}
       });
 
       Object.defineProperty(this, 'state', {
@@ -180,27 +220,36 @@ module.exports = function (config) {
             id: this.id,
             username: this.auth.username,
             channels: this.channels,
-            connected: !!ws.OPEN,
+            connected: this.connected,
             authenticated: this.authenticated,
-            canSend: (this.connected && this.authenticated),
-            connectTime: this.connectTime
+            connectTime: this.connectTime,
+            remoteAddress: wsMeta.remoteAddress,
+            meta: this.metaObj
           };
         }
       });
 
       this.send = function (event, payload) {
-        if ((this.connected && this.authenticated) || event == '_kickConnection')
-          ws.send(obsString([event, payload], config.obfuscate));
+        if (!(this.connected && this.authenticated) && event !== '_kickConnection') return;
+
+        let payLoadStr = JSON.stringify([event, payload]);
+
+        let msgHash = hashString(payLoadStr);
+        if (msgHash === this.lastMsgHash) return;
+        this.lastMsgHash = msgHash;
+        ws.send(payLoadStr);
       };
 
-      this.close = function () {
-        ws.close();
+      this.close = function (code, reason) {
+        ws.close(code || 1000, reason || 'NO_REASON');
       };
 
       this.kick = (reason) => {
         this.authenticated = false;
         this.send('_kickConnection', reason || null);
-        setTimeout(this.close, 100);
+        setTimeout(_ => {
+          this.close(1000, reason);
+        }, 100);
         if (config.debug)
           console.log('Snub WS Client Kicked [' + reason + '] => ' + this.state.id);
       };
@@ -223,7 +272,6 @@ module.exports = function (config) {
       };
       var denyAuth = () => {
         this.kick('AUTH_FAIL');
-        setTimeout(this.close, 100);
         snub.mono('ws:client-failedauth', this.state).send();
         if (config.debug)
           console.log('Snub WS Client Rejected Auth => ' + this.state.id);
@@ -256,10 +304,11 @@ module.exports = function (config) {
 
       ws.on('message', e => {
         try {
-          var [event, data, reply] = obsParse(e);
+          this.lastMsgTime = Date.now();
+          var [event, data, reply] = JSON.parse(e);
 
           // block client messages
-          if (['send-all', 'connected-clients', 'client-authenticated', 'client-failedauth'].includes(event) || event.match(/^(send|kick|client-attributes)\:/))
+          if (['send-all', 'connected-clients', 'client-authenticated', 'client-failedauth'].includes(event) || event.match(/^(send|kick|client-attributes):/))
             return false;
 
           if (typeof libReserved[event] === 'function') {
@@ -289,49 +338,34 @@ module.exports = function (config) {
                 });
             });
         } catch (err) {
-          console.log(err);
+          config.error(err);
         }
       });
+
+      ws.on('error', config.error);
 
       ws.on('close', () => {
         this.connected = false;
         this.authenticated = false;
         snub.mono('ws:client-disconnected', this.state).send();
-        snub.poly('ws_internal:client-disconnected', this.state).send();
+        setTimeout(_ => {
+          this.dead = true;
+          cleanUpDeadSockets(this.id);
+        }, 1000);
       });
     }
   };
 };
 
-function obsParse (str) {
-  var isOb = false;
-  if (str.match(/^~~/igm)) {
-    isOb = true;
-    str = str.replace(/^~~/igm, '');
+function hashString (str) {
+  let hash = 0;
+  let i;
+  let chr;
+  if (str.length === 0) return hash;
+  for (i = 0; i < str.length; i++) {
+    chr = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + chr;
+    hash |= 0; // Convert to 32bit integer
   }
-  if (isOb) {
-    var charcode;
-    var result = '';
-    for (var i = 0; i < str.length; i++) {
-      charcode = (str[i].charCodeAt()) + (str.length * -1);
-      result += String.fromCharCode(charcode);
-    }
-    str = result;
-  }
-
-  return JSON.parse(str);
-}
-
-function obsString (value, obs) {
-  var str = JSON.stringify(value);
-  if (!obs)
-    return str;
-  var charcode;
-  var result = '';
-  for (var i = 0; i < str.length; i++) {
-    charcode = (str[i].charCodeAt()) + str.length;
-    result += String.fromCharCode(charcode);
-  }
-  str = result;
-  return '~~' + str;
+  return hash;
 }
