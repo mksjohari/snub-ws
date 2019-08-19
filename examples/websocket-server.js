@@ -35,14 +35,13 @@ snub.on('ws:client-authenticated', function (payload) {
 snub.on('ws:do-math', function (event, reply) {
   console.log('domath');
   // if the event for the client is expecting a reply we can do so.
-  if (typeof reply == 'function')
+  if (typeof reply === 'function')
     reply(process.pid + '=' + event.payload.reduce((p, c) => {
       return (p + c);
     }, 0));
 });
 
 snub.on('ws:broadcast', function (event) {
-
   snub.poly('ws:get-client', event.from.id).replyAt(userInfo => {
     console.log(userInfo);
   }).send();
@@ -57,7 +56,6 @@ snub.on('ws:broadcast', function (event) {
         console.log('DEL USER CHANNEL=>', user);
 
         snub.poly('ws:send-channel:channel3', ['channel3', 'channel3 message']).send();
-
       }).send();
     }).send();
   }).send();
@@ -88,7 +86,6 @@ snub.on('ws:whos-online', function (event, reply) {
     count = listenCount;
   });
 });
-
 
 // create a basic http server to serve up client files.
 const http = require('http');

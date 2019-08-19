@@ -1,13 +1,9 @@
-const querystring = require('querystring');
-const url = require('url');
 const { WebSocketServer } = require('@clusterws/cws');
 
 module.exports = function (config) {
   config = Object.assign({
     port: 8585,
-    auth: function (auth, accept, deny) {
-      accept();
-    },
+    auth: false,
     debug: false,
     mutliLogin: true,
     authTimeout: 3000,
@@ -15,8 +11,12 @@ module.exports = function (config) {
     throttle: [50, 5000] // X number of messages per Y milliseconds.
   }, config || {});
 
-  return function (snub) {
+  // dont think we really need this
+  // function (auth, accept, deny) {
+  //   accept();
+  // }
 
+  return function (snub) {
     var wss = new WebSocketServer({
       port: config.port
     }, () => {
@@ -27,7 +27,7 @@ module.exports = function (config) {
 
     wss.on('connection', (ws, upGr) => {
       ws.upgradeReq = upGr;
-      var clientConn = new ClientConnection(ws, config.auth);
+      var clientConn = new ClientConnection(ws);
       socketClients.push(clientConn);
       if (config.debug)
         console.log('Snub WS Client Connected => ' + clientConn.id);
@@ -37,13 +37,14 @@ module.exports = function (config) {
 
     snub.on('ws:send-all', function (payload) {
       socketClients.forEach(client => {
+        if (!client.state.canSend) return;
         client.send(...payload);
       });
     });
 
     // get client info
     snub.on('ws:get-client', function (arrayOfClients, reply) {
-      if (typeof arrayOfClients == 'string') arrayOfClients = [arrayOfClients];
+      if (typeof arrayOfClients === 'string') arrayOfClients = [arrayOfClients];
       arrayOfClients = socketClients.filter(client => {
         if (arrayOfClients.includes(client.state.id) || arrayOfClients.includes(client.state.username))
           return true;
@@ -56,61 +57,55 @@ module.exports = function (config) {
     snub.on('ws:send:*', function (payload, n1, channel) {
       var sendTo = channel.split(':').pop().split(',');
       var [event, ePayload] = payload;
-      socketClients.filter(client => {
+
+      socketClients.forEach(client => {
+        if (!client.state.canSend) return;
         if (sendTo.includes(client.state.id) || sendTo.includes(client.state.username))
-          return true;
-        return false;
-      }).forEach(client => {
-        client.send(event, ePayload);
+          client.send(event, ePayload);
       });
     });
 
     snub.on('ws:send-channel:*', function (payload, n1, channel) {
       var channels = channel.split(':').pop().split(',');
       var [event, ePayload] = payload;
-      socketClients.filter(client => {
-        return channels.some(channel => client.state.channels.includes(channel));
-      }).forEach(client => {
-        client.send(event, ePayload);
+      // TODO why do this twice ??
+      socketClients.forEach(client => {
+        if (!client.state.canSend) return;
+        if (channels.some(channel => client.state.channels.includes(channel)))
+          client.send(event, ePayload);
       });
     });
 
     // add, set and delet channels for a client
     snub.on('ws:add-channel:*', function (arrayOfChannels, reply, channel) {
-      if (typeof arrayOfChannels == 'string') arrayOfChannels = [arrayOfChannels];
+      if (typeof arrayOfChannels === 'string') arrayOfChannels = [arrayOfChannels];
       var clients = channel.split(':').pop().split(',');
       clients = socketClients.filter(client => {
-        if (clients.includes(client.state.id) || clients.includes(client.state.username)) {
-          client.channels = [].concat(client.channels, arrayOfChannels);
-          return true;
-        }
-        return false;
+        if (!clients.includes(client.state.id) && !clients.includes(client.state.username)) return false;
+        client.channels = [].concat(client.channels, arrayOfChannels);
+        return true;
       }).map(client => client.state);
       if (clients.length > 0 && reply)
         reply(clients);
     });
     snub.on('ws:set-channel:*', function (arrayOfChannels, reply, channel) {
-      if (typeof arrayOfChannels == 'string') arrayOfChannels = [arrayOfChannels];
+      if (typeof arrayOfChannels === 'string') arrayOfChannels = [arrayOfChannels];
       var clients = channel.split(':').pop().split(',');
       clients = socketClients.filter(client => {
-        if (clients.includes(client.state.id) || clients.includes(client.state.username)) {
-          client.channels = arrayOfChannels;
-          return true;
-        }
-        return false;
+        if (!clients.includes(client.state.id) && !clients.includes(client.state.username)) return false;
+        client.channels = arrayOfChannels;
+        return true;
       }).map(client => client.state);
       if (clients.length > 0 && reply)
         reply(clients);
     });
     snub.on('ws:del-channel:*', function (arrayOfChannels, reply, channel) {
-      if (typeof arrayOfChannels == 'string') arrayOfChannels = [arrayOfChannels];
+      if (typeof arrayOfChannels === 'string') arrayOfChannels = [arrayOfChannels];
       var clients = channel.split(':').pop().split(',');
       clients = socketClients.filter(client => {
-        if (clients.includes(client.state.id) || clients.includes(client.state.username)) {
-          client.channels = client.state.channels.filter(channel => (arrayOfChannels.indexOf(channel) > -1 ? false : true));
-          return true;
-        }
-        return false;
+        if (!clients.includes(client.state.id) && !clients.includes(client.state.username)) return false;
+        client.channels = client.state.channels.filter(channel => (!(arrayOfChannels.indexOf(channel) > -1)));
+        return true;
       }).map(client => client.state);
       if (clients.length > 0 && reply)
         reply(clients);
@@ -118,11 +113,8 @@ module.exports = function (config) {
 
     snub.on('ws:kick:*', function (message, n2, channel) {
       var sendTo = channel.split(':').pop().split(',');
-      socketClients.filter(client => {
-        if (sendTo.includes(client.state.id) || sendTo.includes(client.state.username))
-          return true;
-        return false;
-      }).forEach(client => {
+      socketClients.forEach(client => {
+        if (!sendTo.includes(client.state.id) && !sendTo.includes(client.state.username)) return;
         client.kick(message);
         client.authenticated = false;
       });
@@ -132,7 +124,7 @@ module.exports = function (config) {
       // if mutliLogin is on then we need to kick other clients with the same username.
       if (config.mutliLogin === false)
         socketClients.forEach(client => {
-          if (client.state.username == connectedClient.username && client.state.id != connectedClient.id && client.connectTime < connectedClient.connectTime) {
+          if (client.state.username === connectedClient.username && client.state.id != connectedClient.id && client.connectTime < connectedClient.connectTime) {
             return client.kick('DUPE_LOGIN');
           }
           return false;
@@ -140,18 +132,22 @@ module.exports = function (config) {
     });
 
     snub.on('ws_internal:client-disconnected', function (s) {
-      var fi = socketClients.findIndex(c => c.id == s.id);
+      var fi = socketClients.findIndex(c => c.id === s.id);
       if (fi > -1)
         socketClients.splice(fi, 1);
     });
 
     snub.on('ws:connected-clients', function (nil, reply, channel) {
-      reply(socketClients.map(c => {
-        return c.state;
-      }));
+      reply(socketClients
+        .map(client => {
+          return client.state;
+        }).filter(client => {
+          if (!client.connected || !client.authenticated) return false;
+          return true;
+        }));
     });
 
-    function generateUID() {
+    function generateUID () {
       var firstPart = (Math.random() * 46656) | 0;
       var secondPart = (Math.random() * 46656) | 0;
       firstPart = ('000' + firstPart.toString(36)).slice(-3);
@@ -159,7 +155,7 @@ module.exports = function (config) {
       return firstPart + secondPart;
     }
 
-    function ClientConnection(ws, authFunction) {
+    function ClientConnection (ws) {
       var wsMeta = {
         url: ws.upgradeReq.url,
         origin: ws.upgradeReq.headers.origin,
@@ -184,8 +180,9 @@ module.exports = function (config) {
             id: this.id,
             username: this.auth.username,
             channels: this.channels,
-            connected: this.connected,
+            connected: !!ws.OPEN,
             authenticated: this.authenticated,
+            canSend: (this.connected && this.authenticated),
             connectTime: this.connectTime
           };
         }
@@ -219,11 +216,10 @@ module.exports = function (config) {
         clearTimeout(authTimeout);
 
         // we want to add a delay here to allow a small window of time to kick dupe users
-        setTimeout(() => {
+        setTimeout(_ => {
           if (this.state.authenticated)
             this.send('_acceptAuth', this.state.id);
         }, 200);
-
       };
       var denyAuth = () => {
         this.kick('AUTH_FAIL');
@@ -241,8 +237,11 @@ module.exports = function (config) {
             this.kick('AUTH_TIMEOUT');
           }, config.authTimeout);
 
-          if (typeof authFunction == 'string')
-            snub.mono('ws:' + authFunction, Object.assign({}, data, wsMeta)).replyAt(payload => {
+          if (config.auth === false)
+            return acceptAuth();
+
+          if (typeof config.auth === 'string')
+            snub.mono('ws:' + config.auth, Object.assign({}, data, wsMeta)).replyAt(payload => {
               if (payload === true)
                 return acceptAuth();
               denyAuth();
@@ -250,8 +249,8 @@ module.exports = function (config) {
               if (!recieved)
                 denyAuth();
             });
-          if (typeof authFunction == 'function')
-            authFunction(Object.assign({}, data, wsMeta), acceptAuth, denyAuth);
+          if (typeof config.auth === 'function')
+            config.auth(Object.assign({}, data, wsMeta), acceptAuth, denyAuth);
         }
       };
 
@@ -259,11 +258,11 @@ module.exports = function (config) {
         try {
           var [event, data, reply] = obsParse(e);
 
-          //block client messages
+          // block client messages
           if (['send-all', 'connected-clients', 'client-authenticated', 'client-failedauth'].includes(event) || event.match(/^(send|kick|client-attributes)\:/))
             return false;
 
-          if (typeof libReserved[event] == 'function') {
+          if (typeof libReserved[event] === 'function') {
             return libReserved[event](data);
           }
           if (!this.authenticated) return;
@@ -276,10 +275,10 @@ module.exports = function (config) {
           }
 
           snub.mono('ws:' + event, {
-              from: this.state,
-              payload: data,
-              _ts: Date.now()
-            })
+            from: this.state,
+            payload: data,
+            _ts: Date.now()
+          })
             .replyAt((reply ? data => {
               this.send(reply, data);
             } : undefined))
@@ -304,7 +303,7 @@ module.exports = function (config) {
   };
 };
 
-function obsParse(str) {
+function obsParse (str) {
   var isOb = false;
   if (str.match(/^~~/igm)) {
     isOb = true;
@@ -323,7 +322,7 @@ function obsParse(str) {
   return JSON.parse(str);
 }
 
-function obsString(value, obs) {
+function obsString (value, obs) {
   var str = JSON.stringify(value);
   if (!obs)
     return str;
