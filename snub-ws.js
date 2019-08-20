@@ -1,4 +1,3 @@
-// const JSONH = require('jsonh');
 const { WebSocketServer } = require('@clusterws/cws');
 
 module.exports = function (config) {
@@ -9,7 +8,7 @@ module.exports = function (config) {
     mutliLogin: true,
     authTimeout: 3000,
     throttle: [50, 5000], // X number of messages per Y milliseconds.
-    idleTimeout: 1000 * 60 * 60, // disconnect if nothing has come from server in x ms 1 hour default
+    idleTimeout: 1000 * 60 * 60, // disconnect if nothing has come from client in x ms 1 hour default
     error: _ => {}
   }, config || {});
 
