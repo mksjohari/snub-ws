@@ -22,7 +22,6 @@ module.exports = function (config) {
     var socketClients = [];
 
     setInterval(_ => {
-      console.log('cleaning');
       socketClients.forEach((client, idx) => {
         if (!client)
           return socketClients.splice(idx, 1);
