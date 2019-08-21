@@ -21,6 +21,32 @@ module.exports = function (config) {
     });
     var socketClients = [];
 
+    setInterval(_ => {
+      console.log('cleaning');
+      socketClients.forEach((client, idx) => {
+        if (!client)
+          return socketClients.splice(idx, 1);
+        let kill = false;
+
+        if (client.dead)
+          kill = 'DEAD_SOCKET';
+
+        if (client.lastMsgTime < Date.now() - config.idleTimeout)
+          kill = 'IDLE_TIMEOUT';
+
+        if (client.connectTime < Date.now() - 1000 * 60 && !client.authenticated)
+          kill = 'AUTH_FAIL';
+
+        if (!kill) return;
+
+        if (client.ws && client.ws.terminate)
+          client.ws.terminate();
+        socketClients.splice(idx, 1);
+      });
+    }, 5000);
+
+    process.socketClients = socketClients;
+
     wss.on('connection', (ws, upGr) => {
       ws.upgradeReq = upGr;
       var clientConn = new ClientConnection(ws);
@@ -138,7 +164,10 @@ module.exports = function (config) {
       // if mutliLogin is on then we need to kick other clients with the same username.
       if (config.mutliLogin === false)
         socketClients.forEach(client => {
-          if (client.state.username === connectedClient.username && client.state.id !== connectedClient.id && client.connectTime < connectedClient.connectTime) {
+          if (client.state.username === connectedClient.username &&
+            client.state.id !== connectedClient.id &&
+            client.connectTime < connectedClient.connectTime &&
+            !client.dead) {
             return client.kick('DUPE_LOGIN');
           }
           return false;
@@ -161,34 +190,6 @@ module.exports = function (config) {
       firstPart = ('000' + firstPart.toString(36)).slice(-3);
       secondPart = ('000' + secondPart.toString(36)).slice(-3);
       return firstPart + secondPart;
-    }
-
-    var cleanDeadDebounce = false;
-    function cleanUpDeadSockets () {
-      if (cleanDeadDebounce) return;
-      cleanDeadDebounce = true;
-      setTimeout(_ => {
-        cleanDeadDebounce = false;
-      }, 5000);
-      socketClients.forEach((client, idx) => {
-        let kill = false;
-
-        if (this.dead)
-          kill = 'DEAD_SOCKET';
-
-        if (client.lastMsgTime < Date.now() - config.idleTimeout)
-          kill = 'IDLE_TIMEOUT';
-
-        if (client.connectTime < Date.now() - 1000 * 60 && !client.authenticated)
-          kill = 'AUTH_FAIL';
-
-        if (!kill) return;
-        if (client.close)
-          return client.close();
-        if (client.ws && client.ws.terminate)
-          client.ws.terminate();
-        socketClients.splice(idx, 1);
-      });
     }
 
     function ClientConnection (ws) {
@@ -347,10 +348,7 @@ module.exports = function (config) {
         this.connected = false;
         this.authenticated = false;
         snub.mono('ws:client-disconnected', this.state).send();
-        setTimeout(_ => {
-          this.dead = true;
-          cleanUpDeadSockets(this.id);
-        }, 1000);
+        this.dead = true;
       });
     }
   };
