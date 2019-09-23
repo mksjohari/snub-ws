@@ -192,7 +192,7 @@ module.exports = function (config) {
     }
 
     function ClientConnection (ws) {
-      // console.log(ws.upgradeReq.url);
+      this.ws = ws;
       var wsMeta = {
         url: ws.upgradeReq.url,
         origin: ws.upgradeReq.headers.origin,
@@ -203,7 +203,6 @@ module.exports = function (config) {
       Object.assign(this, {
         id: process.pid + '-' + generateUID(),
         auth: {},
-        socket: ws,
         channels: [],
         connected: true,
         authenticated: false,
@@ -227,31 +226,6 @@ module.exports = function (config) {
           };
         }
       });
-
-      this.send = function (event, payload) {
-        if (!(this.connected && this.authenticated) && event !== '_kickConnection') return;
-
-        let payLoadStr = JSON.stringify([event, payload]);
-
-        let msgHash = hashString(payLoadStr);
-        if (msgHash === this.lastMsgHash) return;
-        this.lastMsgHash = msgHash;
-        ws.send(payLoadStr);
-      };
-
-      this.close = function (code, reason) {
-        ws.close(code || 1000, reason || 'NO_REASON');
-      };
-
-      this.kick = (reason) => {
-        this.authenticated = false;
-        this.send('_kickConnection', reason || null);
-        setTimeout(_ => {
-          this.close(1000, reason);
-        }, 100);
-        if (config.debug)
-          console.log('Snub WS Client Kicked [' + reason + '] => ' + this.state.id);
-      };
 
       var authTimeout;
       var acceptAuth = () => {
@@ -298,6 +272,9 @@ module.exports = function (config) {
             });
           if (typeof config.auth === 'function')
             config.auth(Object.assign({}, data, wsMeta), acceptAuth, denyAuth);
+        },
+        _ping: ts => {
+          this.send('_pong', ts);
         }
       };
 
@@ -350,7 +327,35 @@ module.exports = function (config) {
         this.dead = true;
       });
     }
+
+    ClientConnection.prototype.kick = function (reason) {
+      this.authenticated = false;
+      this.send('_kickConnection', reason || null);
+      setTimeout(_ => {
+        this.close(1000, reason);
+      }, 100);
+      if (config.debug)
+        console.log('Snub WS Client Kicked [' + reason + '] => ' + this.state.id);
+    };
+
+    ClientConnection.prototype.close = function (code, reason) {
+      this.ws.close(code || 1000, reason || 'NO_REASON');
+    };
+
+    ClientConnection.prototype.send = function (event, payload) {
+      if (!(this.connected && this.authenticated) && event !== '_kickConnection') return;
+
+      let payLoadStr = JSON.stringify([event, payload]);
+
+      let msgHash = hashString(payLoadStr);
+      if (msgHash === this.lastMsgHash) return;
+      this.lastMsgHash = msgHash;
+      this.ws.send(payLoadStr);
+    };
+
   };
+
+
 };
 
 function hashString (str) {
