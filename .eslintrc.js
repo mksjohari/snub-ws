@@ -2,18 +2,16 @@
 
 module.exports = {
   root: true,
-  parserOptions: {
-    parser: 'eslint'
-  },
   env: {
-    "node": true
+    browser: false,
+    es6: true,
+    node: true,
+    jest: true,
   },
-  extends: [
-    // https://github.com/standard/standard/blob/master/docs/RULES-en.md
-    'standard'
-  ],
+  extends: ['standard'],
   // add your custom rules here
   rules: {
+    'prefer-promise-reject-errors': [0, {"allowEmptyReject": true}],
     "curly": [0, "multi-or-nest"],
     "semi": [2, "always"],
     // allow async-await
@@ -23,7 +21,6 @@ module.exports = {
     // turn off because we need for postgress - other options to be discussed
     "camelcase": 0,
     "no-unused-vars": ["warn"],
-    "prefer-promise-reject-errors": ["off", {"allowEmptyReject": true}],
     // id rather this be...
     // "comma-dangle": ["error", "always"]
     // (always dangle)

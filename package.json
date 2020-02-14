@@ -1,6 +1,6 @@
 {
   "name": "snub-ws",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "description": "WebSocket server middleware for snub",
   "main": "snub-ws.js",
   "scripts": {
@@ -21,14 +21,15 @@
   },
   "homepage": "https://github.com/cokeeffekt/snub-ws#readme",
   "dependencies": {
-    "@clusterws/cws": "^0.15.0"
+    "@clusterws/cws": "^1.1.2"
   },
   "devDependencies": {
-    "eslint": "^4.15.0",
-    "eslint-config-standard": "^10.2.1",
-    "eslint-friendly-formatter": "^3.0.0",
-    "i": "^0.3.6",
-    "npm": "^6.10.3",
-    "snub": "^1.0.9"
+    "eslint": "^6.8.0",
+    "eslint-config-standard": "^14.1.0",
+    "eslint-plugin-import": "^2.20.1",
+    "eslint-plugin-node": "^11.0.0",
+    "eslint-plugin-promise": "^4.2.1",
+    "eslint-plugin-standard": "^4.0.1",
+    "snub": "^2.0.1"
   }
 }

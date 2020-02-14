@@ -16,30 +16,24 @@ module.exports = function (config) {
     var wss = new WebSocketServer({
       port: config.port
     }, () => {
-      if (config.debug)
-        console.log('Snub WS server listening on port ' + config.port);
+      if (config.debug) { console.log('Snub WS server listening on port ' + config.port); }
     });
     var socketClients = [];
 
     setInterval(_ => {
       socketClients.forEach((client, idx) => {
-        if (!client)
-          return socketClients.splice(idx, 1);
+        if (!client) { return socketClients.splice(idx, 1); }
         let kill = false;
 
-        if (client.dead)
-          kill = 'DEAD_SOCKET';
+        if (client.dead) { kill = 'DEAD_SOCKET'; }
 
-        if (client.lastMsgTime < Date.now() - config.idleTimeout)
-          kill = 'IDLE_TIMEOUT';
+        if (client.lastMsgTime < Date.now() - config.idleTimeout) { kill = 'IDLE_TIMEOUT'; }
 
-        if (client.connectTime < Date.now() - 1000 * 60 && !client.authenticated)
-          kill = 'AUTH_FAIL';
+        if (client.connectTime < Date.now() - 1000 * 60 && !client.authenticated) { kill = 'AUTH_FAIL'; }
 
         if (!kill) return;
 
-        if (client.ws && client.ws.terminate)
-          client.ws.terminate();
+        if (client.ws && client.ws.terminate) { client.ws.terminate(); }
         socketClients.splice(idx, 1);
       });
     }, 5000);
@@ -50,8 +44,7 @@ module.exports = function (config) {
       ws.upgradeReq = upGr;
       var clientConn = new ClientConnection(ws);
       socketClients.push(clientConn);
-      if (config.debug)
-        console.log('Snub WS Client Connected => ' + clientConn.id);
+      if (config.debug) { console.log('Snub WS Client Connected => ' + clientConn.id); }
       snub.mono('ws:client-connected', clientConn.state).send();
       snub.poly('ws_internal:client-connected', clientConn.state).send();
     });
@@ -66,12 +59,10 @@ module.exports = function (config) {
     snub.on('ws:get-client', function (arrayOfClients, reply) {
       if (typeof arrayOfClients === 'string') arrayOfClients = [arrayOfClients];
       arrayOfClients = socketClients.filter(client => {
-        if (arrayOfClients.includes(client.state.id) || arrayOfClients.includes(client.state.username))
-          return true;
+        if (arrayOfClients.includes(client.state.id) || arrayOfClients.includes(client.state.username)) { return true; }
         return false;
       }).map(client => client.state);
-      if (arrayOfClients.length > 0)
-        reply(arrayOfClients);
+      if (arrayOfClients.length > 0) { reply(arrayOfClients); }
     });
 
     snub.on('ws:send:*', function (payload, n1, channel) {
@@ -79,8 +70,7 @@ module.exports = function (config) {
       var [event, ePayload] = payload;
 
       socketClients.forEach(client => {
-        if (sendTo.includes(client.state.id) || sendTo.includes(client.state.username))
-          client.send(event, ePayload);
+        if (sendTo.includes(client.state.id) || sendTo.includes(client.state.username)) { client.send(event, ePayload); }
       });
     });
 
@@ -88,21 +78,19 @@ module.exports = function (config) {
       var channels = channel.split(':').pop().split(',');
       var [event, ePayload] = payload;
       socketClients.forEach(client => {
-        if (channels.some(channel => client.state.channels.includes(channel)))
-          client.send(event, ePayload);
+        if (channels.some(channel => client.state.channels.includes(channel))) { client.send(event, ePayload); }
       });
     });
 
     snub.on('ws:set-meta:*', function (metaObj, reply, channel) {
       Object.keys(metaObj).forEach(k => {
-        if (Array.isArray(metaObj[k]))
+        if (Array.isArray(metaObj[k])) {
           return (metaObj[k] = metaObj[k].filter(i => {
             return (['number', 'string'].includes(typeof i) && String(i).length < 64);
           }).slice(0, 64));
-        if (['number', 'string'].includes(typeof metaObj[k]) && String(metaObj[k]).length > 128)
-          return (delete metaObj[k]);
-        if (typeof metaObj[k] === 'object')
-          return (delete metaObj[k]);
+        }
+        if (['number', 'string'].includes(typeof metaObj[k]) && String(metaObj[k]).length > 128) { return (delete metaObj[k]); }
+        if (typeof metaObj[k] === 'object') { return (delete metaObj[k]); }
       });
 
       var clients = channel.split(':').pop().split(',');
@@ -111,8 +99,7 @@ module.exports = function (config) {
         Object.assign(client.metaObj, metaObj);
         return true;
       }).map(client => client.state);
-      if (clients.length > 0 && reply)
-        reply(clients);
+      if (clients.length > 0 && reply) { reply(clients); }
     });
 
     // add, set and delet channels for a client
@@ -124,8 +111,7 @@ module.exports = function (config) {
         client.channels = [].concat(client.channels, arrayOfChannels);
         return true;
       }).map(client => client.state);
-      if (clients.length > 0 && reply)
-        reply(clients);
+      if (clients.length > 0 && reply) { reply(clients); }
     });
     snub.on('ws:set-channel:*', function (arrayOfChannels, reply, channel) {
       if (typeof arrayOfChannels === 'string') arrayOfChannels = [arrayOfChannels];
@@ -135,8 +121,7 @@ module.exports = function (config) {
         client.channels = arrayOfChannels;
         return true;
       }).map(client => client.state);
-      if (clients.length > 0 && reply)
-        reply(clients);
+      if (clients.length > 0 && reply) { reply(clients); }
     });
     snub.on('ws:del-channel:*', function (arrayOfChannels, reply, channel) {
       if (typeof arrayOfChannels === 'string') arrayOfChannels = [arrayOfChannels];
@@ -146,8 +131,7 @@ module.exports = function (config) {
         client.channels = client.state.channels.filter(channel => (!(arrayOfChannels.indexOf(channel) > -1)));
         return true;
       }).map(client => client.state);
-      if (clients.length > 0 && reply)
-        reply(clients);
+      if (clients.length > 0 && reply) { reply(clients); }
     });
 
     snub.on('ws:kick:*', function (message, n2, channel) {
@@ -161,7 +145,7 @@ module.exports = function (config) {
 
     snub.on('ws_internal:client-authenticated', function (connectedClient) {
       // if mutliLogin is on then we need to kick other clients with the same username.
-      if (config.mutliLogin === false)
+      if (config.mutliLogin === false) {
         socketClients.forEach(client => {
           if (client.state.username === connectedClient.username &&
             client.state.id !== connectedClient.id &&
@@ -171,6 +155,7 @@ module.exports = function (config) {
           }
           return false;
         });
+      }
     });
 
     snub.on('ws:connected-clients', function (nil, reply, channel) {
@@ -197,7 +182,7 @@ module.exports = function (config) {
         url: ws.upgradeReq.url,
         origin: ws.upgradeReq.headers.origin,
         host: ws.upgradeReq.headers.host,
-        remoteAddress: ws.upgradeReq.headers['x-real-ip'] || ws.upgradeReq.headers['x-forwarded-for'] || ws._socket.remoteAddress,
+        remoteAddress: ws.upgradeReq.headers['x-real-ip'] || ws.upgradeReq.headers['x-forwarded-for'] || ws._socket.remoteAddress
       };
 
       Object.assign(this, {
@@ -233,21 +218,18 @@ module.exports = function (config) {
 
         snub.mono('ws:client-authenticated', this.state).send();
         snub.poly('ws_internal:client-authenticated', this.state).send();
-        if (config.debug)
-          console.log('Snub WS Client Authenticated => ' + this.state.id);
+        if (config.debug) { console.log('Snub WS Client Authenticated => ' + this.state.id); }
         clearTimeout(authTimeout);
 
         // we want to add a delay here to allow a small window of time to kick dupe users
         setTimeout(_ => {
-          if (this.state.authenticated)
-            this.send('_acceptAuth', this.state.id);
+          if (this.state.authenticated) { this.send('_acceptAuth', this.state.id); }
         }, 200);
       };
       var denyAuth = () => {
         this.kick('AUTH_FAIL');
         snub.mono('ws:client-failedauth', this.state).send();
-        if (config.debug)
-          console.log('Snub WS Client Rejected Auth => ' + this.state.id);
+        if (config.debug) { console.log('Snub WS Client Rejected Auth => ' + this.state.id); }
         clearTimeout(authTimeout);
       };
 
@@ -258,20 +240,17 @@ module.exports = function (config) {
             this.kick('AUTH_TIMEOUT');
           }, config.authTimeout);
 
-          if (config.auth === false)
-            return acceptAuth();
+          if (config.auth === false) { return acceptAuth(); }
 
-          if (typeof config.auth === 'string')
+          if (typeof config.auth === 'string') {
             snub.mono('ws:' + config.auth, Object.assign({}, data, wsMeta)).replyAt(payload => {
-              if (payload === true)
-                return acceptAuth();
+              if (payload === true) { return acceptAuth(); }
               denyAuth();
             }).send(recieved => {
-              if (!recieved)
-                denyAuth();
+              if (!recieved) { denyAuth(); }
             });
-          if (typeof config.auth === 'function')
-            config.auth(Object.assign({}, data, wsMeta), acceptAuth, denyAuth);
+          }
+          if (typeof config.auth === 'function') { config.auth(Object.assign({}, data, wsMeta), acceptAuth, denyAuth); }
         },
         _ping: ts => {
           this.send('_pong', ts);
@@ -284,8 +263,7 @@ module.exports = function (config) {
           var [event, data, reply] = JSON.parse(e);
 
           // block client messages
-          if (['send-all', 'connected-clients', 'client-authenticated', 'client-failedauth'].includes(event) || event.match(/^(send|kick|client-attributes):/))
-            return false;
+          if (['send-all', 'connected-clients', 'client-authenticated', 'client-failedauth'].includes(event) || event.match(/^(send|kick|client-attributes):/)) { return false; }
 
           if (typeof libReserved[event] === 'function') {
             return libReserved[event](data);
@@ -294,8 +272,7 @@ module.exports = function (config) {
 
           if (config.throttle) {
             this.recent = this.recent.filter(ts => ts > Date.now() - config.throttle[1]);
-            if (this.recent.length > config.throttle[0])
-              this.kick('THROTTLE_LIMIT');
+            if (this.recent.length > config.throttle[0]) { this.kick('THROTTLE_LIMIT'); }
             this.recent.push(Date.now());
           }
 
@@ -308,10 +285,11 @@ module.exports = function (config) {
               this.send(reply, data);
             } : undefined))
             .send(c => {
-              if (c < 1 && reply)
+              if (c < 1 && reply) {
                 this.send(reply + ':error', {
                   error: 'Nothing was listening to this event'
                 });
+              }
             });
         } catch (err) {
           config.error(err);
@@ -334,8 +312,7 @@ module.exports = function (config) {
       setTimeout(_ => {
         this.close(1000, reason);
       }, 100);
-      if (config.debug)
-        console.log('Snub WS Client Kicked [' + reason + '] => ' + this.state.id);
+      if (config.debug) { console.log('Snub WS Client Kicked [' + reason + '] => ' + this.state.id); }
     };
 
     ClientConnection.prototype.close = function (code, reason) {
@@ -345,17 +322,14 @@ module.exports = function (config) {
     ClientConnection.prototype.send = function (event, payload) {
       if (!(this.connected && this.authenticated) && event !== '_kickConnection') return;
 
-      let payLoadStr = JSON.stringify([event, payload]);
+      const payLoadStr = JSON.stringify([event, payload]);
 
-      let msgHash = hashString(payLoadStr);
+      const msgHash = hashString(payLoadStr);
       if (msgHash === this.lastMsgHash) return;
       this.lastMsgHash = msgHash;
       this.ws.send(payLoadStr);
     };
-
   };
-
-
 };
 
 function hashString (str) {
