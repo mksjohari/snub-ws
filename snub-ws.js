@@ -20,6 +20,7 @@ module.exports = function (config) {
     });
     var socketClients = [];
 
+    // clean up old sockets
     setInterval(_ => {
       socketClients.forEach((client, idx) => {
         if (!client) { return socketClients.splice(idx, 1); }
@@ -33,7 +34,9 @@ module.exports = function (config) {
 
         if (!kill) return;
 
-        if (client.ws && client.ws.terminate) { client.ws.terminate(); }
+        if (client.ws && client.ws.close) {
+          client.ws.close(1000, kill);
+        }
         socketClients.splice(idx, 1);
       });
     }, 5000);
@@ -51,7 +54,8 @@ module.exports = function (config) {
 
     snub.on('ws:send-all', function (payload) {
       socketClients.forEach(client => {
-        client.send(...payload);
+        if (client.authenticated)
+          client.send(...payload);
       });
     });
 
@@ -70,7 +74,9 @@ module.exports = function (config) {
       var [event, ePayload] = payload;
 
       socketClients.forEach(client => {
-        if (sendTo.includes(client.state.id) || sendTo.includes(client.state.username)) { client.send(event, ePayload); }
+        if (sendTo.includes(client.state.id) || sendTo.includes(client.state.username)) {
+          client.send(event, ePayload);
+        }
       });
     });
 
@@ -178,6 +184,8 @@ module.exports = function (config) {
 
     function ClientConnection (ws) {
       this.ws = ws;
+      var authTimeout;
+
       var wsMeta = {
         url: ws.upgradeReq.url,
         origin: ws.upgradeReq.headers.origin,
@@ -212,7 +220,6 @@ module.exports = function (config) {
         }
       });
 
-      var authTimeout;
       var acceptAuth = () => {
         this.authenticated = true;
 
@@ -256,6 +263,15 @@ module.exports = function (config) {
           this.send('_pong', ts);
         }
       };
+
+      if (config.auth) {
+        authTimeout = setTimeout(_ => {
+          if (!this.authenticated)
+            this.kick('AUTH_TIMEOUT');
+        }, config.authTimeout);
+      } else {
+        acceptAuth();
+      }
 
       ws.on('message', e => {
         try {
@@ -309,9 +325,7 @@ module.exports = function (config) {
     ClientConnection.prototype.kick = function (reason) {
       this.authenticated = false;
       this.send('_kickConnection', reason || null);
-      setTimeout(_ => {
-        this.close(1000, reason);
-      }, 100);
+      this.close(1000, reason);
       if (config.debug) { console.log('Snub WS Client Kicked [' + reason + '] => ' + this.state.id); }
     };
 
