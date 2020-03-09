@@ -257,7 +257,13 @@ module.exports = function (config) {
               if (!recieved) { denyAuth(); }
             });
           }
-          if (typeof config.auth === 'function') { config.auth(Object.assign({}, data, wsMeta), acceptAuth, denyAuth); }
+          if (typeof config.auth === 'function') {
+            config.auth(Object.assign({}, data, wsMeta), res => {
+              if (res === true)
+                return acceptAuth();
+              return denyAuth();
+            });
+          }
         },
         _ping: ts => {
           this.send('_pong', ts);
