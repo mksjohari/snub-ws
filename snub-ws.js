@@ -285,7 +285,8 @@ module.exports = function (config) {
           var [event, data, reply] = JSON.parse(e);
 
           // block client messages
-          if (['send-all', 'connected-clients', 'client-authenticated', 'client-failedauth'].includes(event) || event.match(/^(send|kick|client-attributes):/)) { return false; }
+          if (['send-all', 'connected-clients', 'client-authenticated', 'client-failedauth'].includes(event)) return false;
+          if (event.match(/^(send|kick|send-channel|set-meta|add-channel|set-channel|del-channel):/)) return false;
 
           if (typeof libReserved[event] === 'function') {
             return libReserved[event](data);
