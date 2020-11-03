@@ -164,7 +164,7 @@ module.exports = function (config) {
       }
     });
 
-    snub.on('ws:connected-clients', function (nil, reply, channel) {
+    snub.on('ws:connected-clients', function (nil, reply) {
       reply(socketClients
         .map(client => {
           return client.state;
@@ -172,6 +172,29 @@ module.exports = function (config) {
           if (!client.connected || !client.authenticated) return false;
           return true;
         }));
+    });
+
+    snub.on('ws:connected-user', function (username, reply) {
+      var clients = [];
+      var expect;
+      var to = setTimeout(_ => {
+        reply([]);
+      }, 5000);
+      snub.poly('ws_internal:client-authenticated', username).replyAt(client => {
+        clients.push(client);
+        if (clients.length === expect || config.mutliLogin === false) {
+          reply(clients);
+          clearTimeout(to);
+        }
+      }).send(c => {
+        expect = c;
+      });
+    });
+
+    snub.on('ws_internal:client-authenticated', function (username, reply) {
+      var client = socketClients.find(s => s.state.username === username || s.state.id === username);
+      if (client)
+        reply(client.state);
     });
 
     function generateUID () {
