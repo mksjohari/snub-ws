@@ -180,14 +180,11 @@ module.exports = function (config) {
       });
 
       var clients = channel.split(':').pop().split(',');
-
-      console.log('SETMETA', clients);
       clients = socketClients.filter(client => {
         if (!clients.includes(client.state.id) && !clients.includes(client.state.username)) return false;
         Object.assign(client.metaObj, metaObj);
         return true;
       }).map(client => client.state);
-      console.log('SETMETA', clients);
       snub.mono('ws_internal:tracked-client-upsert', clients).send();
       if (clients.length > 0 && reply) { reply(clients); }
     });
