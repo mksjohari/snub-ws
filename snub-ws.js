@@ -1,4 +1,21 @@
 const { WebSocketServer } = require('@clusterws/cws');
+var cleanUpFns = [];
+
+process.stdin.resume();// so the program will not close instantly
+
+function exitHandler (options, exitCode) {
+  cleanUpFns.forEach(fn => {
+    fn();
+  });
+  process.exit();
+}
+
+// do something when app is closing
+process.on('exit', exitHandler.bind(null, { exit: true }));
+process.on('SIGINT', exitHandler.bind(null, { exit: true }));
+process.on('SIGUSR1', exitHandler.bind(null, { exit: true }));
+process.on('SIGUSR2', exitHandler.bind(null, { exit: true }));
+process.on('uncaughtException', exitHandler.bind(null, { exit: true }));
 
 module.exports = function (config) {
   config = Object.assign({
@@ -9,38 +26,40 @@ module.exports = function (config) {
     authTimeout: 3000,
     throttle: [50, 5000], // X number of messages per Y milliseconds.
     idleTimeout: 1000 * 60 * 60, // disconnect if nothing has come from client in x ms 1 hour default
+    instanceId: process.pid + '_' + generateUID(),
     error: _ => {}
   }, config || {});
-
-  // process.stdin.resume();// so the program will not close instantly
-
-  // function exitHandler (options, exitCode) {
-  //   if (options.cleanup) console.log('clean');
-  //   if (exitCode || exitCode === 0) console.log(exitCode);
-  //   if (options.exit) process.exit();
-  // }
-
-  // // do something when app is closing
-  // process.on('exit', exitHandler.bind(null, { cleanup: true }));
-
-  // // catches ctrl+c event
-  // process.on('SIGINT', exitHandler.bind(null, { exit: true }));
-
-  // // catches "kill pid" (for example: nodemon restart)
-  // process.on('SIGUSR1', exitHandler.bind(null, { exit: true }));
-  // process.on('SIGUSR2', exitHandler.bind(null, { exit: true }));
-
-  // catches uncaught exceptions
-  // process.on('uncaughtException', exitHandler.bind(null, { exit: true }));
 
   return function (snub) {
     var wss = new WebSocketServer({
       port: config.port
-    }, () => {
+    }, _ => {
       if (config.debug) { console.log('Snub WS server listening on port ' + config.port); }
     });
     var socketClients = [];
     var trackedClients = [];
+    var trackedInstances = new Set();
+
+    trackedInstances.add(config.instanceId);
+    snub.on('ws_internal:tracked-instance', i => {
+      if (i.online)
+        return trackedInstances.add(i.instanceId);
+      trackedInstances.delete(i.instanceId);
+    });
+    snub.poly('ws_internal:tracked-instance', {
+      instanceId: config.instanceId,
+      online: true
+    }).send();
+
+    cleanUpFns.push(_ => {
+      if (config.debug)
+        console.log('Snub WS Cleanup');
+      snub.poly('ws_internal:tracked-client-remove', socketClients.map(c => c.state.id)).send();
+      snub.poly('ws_internal:tracked-instance', {
+        instanceId: config.instanceId,
+        online: false
+      }).send();
+    });
 
     // clean up old sockets
     setInterval(_ => {
@@ -65,21 +84,26 @@ module.exports = function (config) {
 
     snub.on('ws_internal:tracked-client-upsert', upsertTrackedClients);
 
-    snub.on('ws_internal:tracked-client-remove', function (clientId) {
-      var idx = trackedClients.findIndex(tc => tc.id === clientId);
-      if (idx > -1)
-        trackedClients.splice(idx, 1);
+    snub.on('ws_internal:tracked-client-remove', function (clientIds) {
+      if (!Array.isArray(clientIds))
+        clientIds = [clientIds];
+      clientIds.forEach(clientId => {
+        var idx = trackedClients.findIndex(tc => tc.id === clientId);
+        if (idx > -1)
+          trackedClients.splice(idx, 1);
+      });
     });
 
-    snub.on('ws_internal:tracked-client-fetch', function (clientId, reply) {
-      var clients = socketClients.filter(client => {
+    // on launch get list of tracked clients from other instances
+    snub.poly('ws_internal:tracked-client-fetch').send();
+
+    snub.on('ws_internal:tracked-client-fetch', _ => {
+      var clientStates = socketClients.filter(client => {
         return (client.state.connected && client.state.authenticated);
       }).map(client => client.state);
-      if (clients.length)
-        snub.poly('ws_internal:tracked-client', clients).send();
+      if (clientStates.length)
+        snub.poly('ws_internal:tracked-client-upsert', clientStates).send();
     });
-
-    snub.on('ws_internal:tracked-client-fetch', upsertTrackedClients);
 
     Object.defineProperty(snub, 'wsConnectedClients', {
       get: function () {
@@ -156,12 +180,15 @@ module.exports = function (config) {
       });
 
       var clients = channel.split(':').pop().split(',');
+
+      console.log('SETMETA', clients);
       clients = socketClients.filter(client => {
         if (!clients.includes(client.state.id) && !clients.includes(client.state.username)) return false;
         Object.assign(client.metaObj, metaObj);
         return true;
       }).map(client => client.state);
-      snub.mono('ws_internal:tracked-client', clients).send();
+      console.log('SETMETA', clients);
+      snub.mono('ws_internal:tracked-client-upsert', clients).send();
       if (clients.length > 0 && reply) { reply(clients); }
     });
 
@@ -174,7 +201,7 @@ module.exports = function (config) {
         client.channels = [].concat(client.channels, arrayOfChannels);
         return true;
       }).map(client => client.state);
-      snub.mono('ws_internal:tracked-client', clients).send();
+      snub.mono('ws_internal:tracked-client-upsert', clients).send();
       if (clients.length > 0 && reply) { reply(clients); }
     });
     snub.on('ws:set-channel:*', function (arrayOfChannels, reply, channel) {
@@ -185,7 +212,7 @@ module.exports = function (config) {
         client.channels = arrayOfChannels;
         return true;
       }).map(client => client.state);
-      snub.mono('ws_internal:tracked-client', clients).send();
+      snub.mono('ws_internal:tracked-client-upsert', clients).send();
       if (clients.length > 0 && reply) { reply(clients); }
     });
     snub.on('ws:del-channel:*', function (arrayOfChannels, reply, channel) {
@@ -196,7 +223,7 @@ module.exports = function (config) {
         client.channels = client.state.channels.filter(channel => (!(arrayOfChannels.indexOf(channel) > -1)));
         return true;
       }).map(client => client.state);
-      snub.mono('ws_internal:tracked-client', clients).send();
+      snub.mono('ws_internal:tracked-client-upsert', clients).send();
       if (clients.length > 0 && reply) { reply(clients); }
     });
 
@@ -228,14 +255,6 @@ module.exports = function (config) {
       reply(snub.wsConnectedClients);
     });
 
-    function generateUID () {
-      var firstPart = (Math.random() * 46656) | 0;
-      var secondPart = (Math.random() * 46656) | 0;
-      firstPart = ('000' + firstPart.toString(36)).slice(-3);
-      secondPart = ('000' + secondPart.toString(36)).slice(-3);
-      return firstPart + secondPart;
-    }
-
     function ClientConnection (ws) {
       this.ws = ws;
       var authTimeout;
@@ -248,7 +267,7 @@ module.exports = function (config) {
       };
 
       Object.assign(this, {
-        id: process.pid + '-' + generateUID(),
+        id: config.instanceId + '-' + generateUID(),
         auth: {},
         channels: [],
         connected: true,
@@ -274,27 +293,27 @@ module.exports = function (config) {
         }
       });
 
-      snub.mono('ws_internal:tracked-client', this.state).send();
-
       var acceptAuth = () => {
         this.authenticated = true;
 
         snub.mono('ws:client-authenticated', this.state).send();
         snub.poly('ws_internal:client-authenticated', this.state).send();
-        if (config.debug) { console.log('Snub WS Client Authenticated => ' + this.state.id); }
+        if (config.debug)
+          console.log('Snub WS Client Authenticated => ' + this.state.id);
         clearTimeout(authTimeout);
 
         // we want to add a delay here to allow a small window of time to kick dupe users
         setTimeout(_ => {
           if (this.state.authenticated) { this.send('_acceptAuth', this.state.id); }
         }, config.mutliLogin ? 0 : 200);
-        snub.mono('ws_internal:tracked-client', this.state).send();
+        snub.mono('ws_internal:tracked-client-upsert', this.state).send();
       };
 
       var denyAuth = () => {
         this.kick('AUTH_FAIL');
         snub.mono('ws:client-failedauth', this.state).send();
-        if (config.debug) { console.log('Snub WS Client Rejected Auth => ' + this.state.id); }
+        if (config.debug)
+          console.log('Snub WS Client Rejected Auth => ' + this.state.id);
         clearTimeout(authTimeout);
       };
 
@@ -415,7 +434,6 @@ module.exports = function (config) {
         clients = [clients];
       clients.forEach(c => {
         if (!c.connected || !c.authenticated) return;
-        c.last_seen = Date.now();
         var existing = trackedClients.find(tc => tc.id === c.id);
         if (existing)
           return Object.assign(existing, c);
@@ -436,4 +454,12 @@ function hashString (str) {
     hash |= 0; // Convert to 32bit integer
   }
   return hash;
+}
+
+function generateUID () {
+  var firstPart = (Math.random() * 46656) | 0;
+  var secondPart = (Math.random() * 46656) | 0;
+  firstPart = ('000' + firstPart.toString(36)).slice(-3);
+  secondPart = ('000' + secondPart.toString(36)).slice(-3);
+  return firstPart + secondPart;
 }
