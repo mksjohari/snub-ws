@@ -250,8 +250,10 @@ module.exports = function (config) {
       }
     });
 
-    snub.on('ws:connected-clients', function (nil, reply) {
-      reply(snub.wsConnectedClients);
+    snub.on('ws:connected-clients', function (clientIds, reply) {
+      if (!clientIds)
+        return reply(snub.wsConnectedClients);
+      reply(snub.wsConnectedClients.filter(c => clientIds.includes(c.id) || clientIds.includes(c.username)));
     });
 
     function ClientConnection (ws) {
