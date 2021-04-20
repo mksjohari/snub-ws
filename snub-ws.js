@@ -87,11 +87,13 @@ module.exports = function (config) {
     snub.on('ws_internal:tracked-client-remove', function (clientIds) {
       if (!Array.isArray(clientIds))
         clientIds = [clientIds];
+      var clients = [];
       clientIds.forEach(clientId => {
         var idx = trackedClients.findIndex(tc => tc.id === clientId);
         if (idx > -1)
-          trackedClients.splice(idx, 1);
+          clients.push(trackedClients.splice(idx, 1)[0]);
       });
+      snub.poly('ws:connected-clients-offline', JSON.parse(JSON.stringify(clients))).send();
     });
 
     // on launch get list of tracked clients from other instances
@@ -432,10 +434,12 @@ module.exports = function (config) {
       clients.forEach(c => {
         if (!c.connected || !c.authenticated) return;
         var existing = trackedClients.find(tc => tc.id === c.id);
-        if (existing)
+        if (existing) {
           return Object.assign(existing, c);
+        }
         trackedClients.push(c);
       });
+      snub.poly('ws:connected-clients-update', JSON.parse(JSON.stringify(clients))).send();
     }
   };
 };
