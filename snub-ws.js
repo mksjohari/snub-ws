@@ -90,10 +90,15 @@ module.exports = function (config) {
       var clients = [];
       clientIds.forEach(clientId => {
         var idx = trackedClients.findIndex(tc => tc.id === clientId);
-        if (idx > -1)
-          clients.push(trackedClients.splice(idx, 1)[0]);
+        if (idx > -1) {
+          var rClient = trackedClients.splice(idx, 1)[0];
+          var socketClient = socketClients.find(sc => sc.state.id === clientId);
+          if (socketClient)
+            clients.push(rClient);
+        }
       });
-      snub.poly('ws:connected-clients-offline', JSON.parse(JSON.stringify(clients))).send();
+      if (clients.length)
+        snub.poly('ws:connected-clients-offline', JSON.parse(JSON.stringify(clients))).send();
     });
 
     // on launch get list of tracked clients from other instances
@@ -403,7 +408,7 @@ module.exports = function (config) {
         this.connected = false;
         this.authenticated = false;
         snub.mono('ws:client-disconnected', this.state).send();
-        snub.mono('ws_internal:tracked-client-remove', this.id).send();
+        snub.poly('ws_internal:tracked-client-remove', this.id).send();
         this.dead = true;
       });
     }
