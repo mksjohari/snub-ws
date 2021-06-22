@@ -512,6 +512,7 @@ module.exports = function (config) {
     }
 
     function wsKick(ws, reason = null) {
+      if (ws.dead) return;
       wsSend(ws, '_kickConnection', reason);
       ws.end(1000, reason);
       if (config.debug) console.log('Snub-ws wsKick');
