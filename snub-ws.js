@@ -65,6 +65,9 @@ module.exports = function (config) {
               remoteAddress: req.getHeader('x-forwarded-for'),
             },
           };
+          req.forEach((k, v) => {
+            console.log(k, v);
+          });
           res.upgrade(
             obj,
             req.getHeader('sec-websocket-key'),
@@ -165,6 +168,7 @@ module.exports = function (config) {
           // console.log('WebSocket back pressure: ' + ws.getBufferedAmount());
         },
         close: (ws, code, message) => {
+          ws.dead = true;
           ws.authenticated = false;
           snub.mono('ws:client-disconnected', ws.state).send();
           snub.poly('ws_internal:tracked-client-remove', ws.id).send();
@@ -515,6 +519,7 @@ module.exports = function (config) {
     }
 
     function wsSend(ws, event, payload) {
+      if (ws.dead) return;
       var sendString = JSON.stringify([event, payload]);
       const msgHash = hashString(sendString);
       if (msgHash === ws.lastMsgHash) return;
