@@ -62,12 +62,11 @@ module.exports = function (config) {
               url: req.getUrl(),
               origin: req.getHeader('origin'),
               host: req.getHeader('host'),
-              remoteAddress: req.getHeader('x-forwarded-for'),
+              remoteAddress:
+                req.getHeader('x-forwarded-for') || req.getHeader('x-real-ip'),
+              cookie: req.getHeader('cookie'),
             },
           };
-          req.forEach((k, v) => {
-            console.log(k, v);
-          });
           res.upgrade(
             obj,
             req.getHeader('sec-websocket-key'),
