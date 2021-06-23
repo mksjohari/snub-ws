@@ -86,7 +86,6 @@ module.exports = function (config) {
             lastMsgTime: Date.now(),
             metaObj: {},
           });
-          console.log(ws);
           Object.defineProperty(ws, 'state', {
             get: function () {
               return {
