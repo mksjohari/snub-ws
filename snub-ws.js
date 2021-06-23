@@ -2,11 +2,6 @@ const uWS = require('uws.js');
 const path = require('path');
 var cleanUpFns = [];
 
-var filename = 'Unknown';
-try {
-  filename = path.basename(process.mainModule.filename);
-} catch (_e) {}
-
 process.stdin.resume(); // so the program will not close instantly
 
 function exitHandler(options, exitCode) {
@@ -33,7 +28,7 @@ module.exports = function (config) {
       authTimeout: 3000,
       throttle: [50, 5000], // X number of messages per Y milliseconds.
       idleTimeout: 1000 * 60 * 60, // disconnect if nothing has come from client in x ms 1 hour default
-      instanceId: process.pid + '_' + filename,
+      instanceId: process.pid + '_' + Date.now(),
       error: (_) => {},
     },
     config || {}
@@ -77,7 +72,12 @@ module.exports = function (config) {
         },
         open: (ws) => {
           Object.assign(ws, {
-            id: config.instanceId + '-' + ws.key,
+            id:
+              config.instanceId +
+              '_' +
+              ws.key.replace(/[^a-z]/gim, '') +
+              '_' +
+              snub.generateUID(),
             auth: {},
             channels: [],
             authenticated: false,
@@ -86,7 +86,7 @@ module.exports = function (config) {
             lastMsgTime: Date.now(),
             metaObj: {},
           });
-
+          console.log(ws);
           Object.defineProperty(ws, 'state', {
             get: function () {
               return {
