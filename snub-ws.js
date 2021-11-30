@@ -114,6 +114,7 @@ module.exports = function (config) {
           if (
             [
               'send-all',
+              'kick-all',
               'connected-clients',
               'client-authenticated',
               'client-failedauth',
@@ -172,6 +173,7 @@ module.exports = function (config) {
           snub.poly('ws_internal:tracked-client-remove', ws.id).send();
           var idx = socketClients.findIndex((i) => i === ws);
           socketClients.splice(idx, 1);
+          console.log('socketClients', socketClients.length);
         },
       })
       .any('/*', (res, req) => {
@@ -237,6 +239,8 @@ module.exports = function (config) {
             JSON.parse(JSON.stringify(clients))
           )
           .send();
+
+      console.log('trackedClients', trackedClients.length);
     });
 
     // on launch get list of tracked clients from other instances
@@ -400,6 +404,13 @@ module.exports = function (config) {
           !sendTo.includes(ws.state.username)
         )
           return;
+        wsKick(ws, message);
+        ws.authenticated = false;
+      });
+    });
+    snub.on('ws:kick-all', function (message, n2, channel) {
+      var sendTo = channel.split(':').pop().split(',');
+      socketClients.forEach((ws) => {
         wsKick(ws, message);
         ws.authenticated = false;
       });
