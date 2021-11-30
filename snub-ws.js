@@ -166,14 +166,15 @@ module.exports = function (config) {
           // need to work out if this is useful for anything.
           // console.log('WebSocket back pressure: ' + ws.getBufferedAmount());
         },
-        close: (ws, code, message) => {
+        close: async (ws, code, message) => {
           ws.dead = true;
           ws.authenticated = false;
           snub.mono('ws:client-disconnected', ws.state).send();
           snub.poly('ws_internal:tracked-client-remove', ws.id).send();
+          // wait 15 seconds before cleaning up the socket from the client list
+          await justWait(15000);
           var idx = socketClients.findIndex((i) => i === ws);
           socketClients.splice(idx, 1);
-          console.log('socketClients', socketClients.length);
         },
       })
       .any('/*', (res, req) => {
@@ -408,8 +409,7 @@ module.exports = function (config) {
         ws.authenticated = false;
       });
     });
-    snub.on('ws:kick-all', function (message, n2, channel) {
-      var sendTo = channel.split(':').pop().split(',');
+    snub.on('ws:kick-all', function (message = 'kick') {
       socketClients.forEach((ws) => {
         wsKick(ws, message);
         ws.authenticated = false;
@@ -550,4 +550,10 @@ function hashString(str) {
     hash |= 0; // Convert to 32bit integer
   }
   return hash;
+}
+
+function justWait(ms = 1000) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
