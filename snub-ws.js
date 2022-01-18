@@ -45,7 +45,9 @@ module.exports = function (config) {
       .App()
       .ws('/*', {
         /* Options */
-        compression: uWS.SHARED_COMPRESSOR,
+        compression: config.compression
+          ? uWS[config.compression]
+          : uWS.SHARED_COMPRESSOR,
         maxPayloadLength: 16 * 1024 * 1024,
         idleTimeout: config.idleTimeout,
         /* Handlers */
