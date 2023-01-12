@@ -27,12 +27,13 @@ module.exports = function (config) {
       multiLogin: true, // can the same user be connected more than once
       authTimeout: 3000,
       throttle: [50, 5000], // X number of messages per Y milliseconds.
-      idleTimeout: 1000 * 60 * 60, // disconnect if nothing has come from client in x ms 1 hour default
+      idleTimeout: Math.max(1000 * 60 * 60, 12000), // disconnect if nothing has come from client in x ms 1 hour default
       instanceId: process.pid + '_' + Date.now(),
       error: (_) => {},
     },
     config || {}
   );
+  config.idleTimeout = Math.max(config.idleTimeout, 1000 * 6 * 5); // min 5 minute on idle timeout
 
   if (config.debug) console.log('Snub-ws Init', config);
 
@@ -40,6 +41,22 @@ module.exports = function (config) {
     var socketClients = [];
     var trackedClients = [];
     var trackedInstances = new Set();
+
+    setInterval((_) => {
+      if (config.debug) console.log('Snub-Ws Interval');
+      socketClients.forEach((ws) => {
+        // time to idle this connection out
+        if (ws.lastMsgTime < Date.now() - config.idleTimeout) {
+          wsKick(ws, 'IDLE_CONNECTION');
+          return;
+        }
+
+        // send ping to connection that will soon idle out
+        if (ws.lastMsgTime < Date.now() - (config.idleTimeout - 6000)) {
+          wsSend(ws, '_ping', Date.now());
+        }
+      });
+    }, 1000 * 5);
 
     uWS
       .App()
@@ -130,8 +147,10 @@ module.exports = function (config) {
           )
             return false;
 
+          ws.lastMsgTime = Date.now();
           if (event === '_auth') return wsValidateAuth(ws, payload);
           if (event === '_ping') return wsSend(ws, '_pong', payload);
+          if (event === '_pong') return console.log('gotPong');
 
           if (config.throttle) {
             ws.recent = ws.recent.filter(
@@ -242,8 +261,7 @@ module.exports = function (config) {
             JSON.parse(JSON.stringify(clients))
           )
           .send();
-
-      console.log('trackedClients', trackedClients.length);
+      if (config.debug) console.log('!trackedClients', trackedClients.length);
     });
 
     // on launch get list of tracked clients from other instances
@@ -530,6 +548,7 @@ module.exports = function (config) {
       if (config.debug) console.log('Snub-ws wsKick');
     }
 
+    // send msg to client
     function wsSend(ws, event, payload) {
       if (ws.dead) return;
       var sendString = JSON.stringify([event, payload]);
