@@ -56,7 +56,7 @@ module.exports = function (config) {
           wsSend(ws, '_ping', Date.now());
         }
       });
-    }, 1000 * 5);
+    }, config.idleTimeout / 4);
 
     uWS
       .App()
