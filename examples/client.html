@@ -1,55 +1,175 @@
 <!DOCTYPE html>
 <html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <title>Snub-ws Client</title>
+    <script>
+      function noop() {
+        console.log('noop');
+      }
 
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="X-UA-Compatible" content="ie=edge">
-  <title>Document</title>
-  <script src="snub-ws-client.js"></script>
-  <script>
-    var i = 10;
-    var conns = [];
-    while (i > 0) {
-      ((it) => {
-        var snub = new snubWs('ws://username:password@localhost:8585');
-        snub.on('connect', function () {
-          console.log('Connected snub' + it);
-          snub.send('snub' + it, 2);
+      var Ws = function (url, opts) {
+        opts = opts || {};
 
-          snub.send('do-math', [2, 3, 4, 5], function (response) {
-            console.log('snub' + it + ' math =>', response);
-          });
-        });
-        snub.on('disconnected', function (message) {
-          console.log('snub' + it + ' => disconnected');
-        });
-        snub.on('hull0', function (message) {
-          console.log('got msg' + it + ' => ' + message);
-        });
-        snub.on('channel3', function (message) {
-          console.log('got msg' + it + ' => ' + message);
-        });
-        conns.push(snub);
-      })(i);
+        var ws;
+        var num = 0;
+        var $ = {
+          hash: Math.random(),
+        };
+        var max = opts.maxAttempts || Infinity;
+        $.open = function () {
+          try {
+            ws.close(1000);
+            ws = undefined;
+          } catch (error) {}
+          ws = new WebSocket(url, opts.protocols || []);
+          $.ws = ws;
 
-      i--;
-    }
+          ws.onmessage = opts.onmessage || noop;
 
-    function whoOnline() {
-      conns.filter(c => c.connected == true)[0].send('whos-online', null, function (response) {
-        console.log(response);
+          ws.onopen = function (e) {
+            console.log('ws-open');
+            (opts.onopen || noop)(e);
+            num = 0;
+          };
+
+          ws.onclose = function (e) {
+            if (e.code === 1005) return;
+            // https://github.com/Luka967/websocket-close-codes
+            // https://developer.mozilla.org/en-US/docs/Web/API/CloseEvent
+            e.code === 1000 || e.code === 1001 || $.reconnect(e);
+            if (e.code === 1000 && e.reason === 'IDLE_TIMEOUT') $.reconnect(e);
+            (opts.onclose || noop)(e);
+          };
+
+          ws.onerror = function (e) {
+            e && e.code === 'ECONNREFUSED'
+              ? $.reconnect(e)
+              : (opts.onerror || noop)(e);
+          };
+        };
+
+        $.reconnect = function (e) {
+          if (num++ < max) {
+            setTimeout(
+              function () {
+                (opts.onreconnect || noop)(e);
+                $.open();
+              },
+              num === 1 ? 1 : (opts.timeout || 500) * (num - 1)
+            );
+          } else {
+            (opts.onmaximum || noop)(e);
+          }
+        };
+
+        $.readyState = function () {
+          return ws.readyState;
+        };
+
+        $.json = function (x) {
+          ws.send(JSON.stringify(x));
+        };
+
+        $.send = function (x) {
+          ws.send(x);
+        };
+
+        $.close = function (x, y) {
+          ws.close(x || 1e3, y);
+          ws.onmessage = noop;
+          ws.onopen = noop;
+          ws.onerror = noop;
+        };
+
+        if (opts.autoConnect) $.open(); // init
+
+        return $;
+      };
+
+      var derp = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+      derp.forEach((element) => {
+        var currentWs = new Ws('ws://username:password@localhost:8585', {
+          autoConnect: true,
+          onopen: (e) => {
+            console.log('SnubSocket Connected');
+            currentWs.json(['_auth', { username: 'username' }]);
+          },
+          onmessage: (e) => {
+            try {
+              var [key, value] = JSON.parse(e.data);
+              // handle the auth check
+              if (key === '_ping')
+                // && Math.random() > 0.5
+                return currentWs.json(['_pong']);
+              if (key === '_pong') return pingCheck();
+              if (key === '_acceptAuth') {
+                console.log('Auth Accepted');
+                return;
+              }
+
+              console.log('Message', key, value);
+            } catch (error) {
+              console.error(error);
+            }
+          },
+          onreconnect: (e) => console.log('Reconnecting...', e),
+          onmaximum: (e) => console.log('Stop Attempting!', e),
+          onclose: (e) => {
+            console.log('socket closed');
+          },
+          onerror: (e) => console.warn('Error:', e),
+        });
       });
-    }
 
-    function broadcast() {
-      conns.filter(c => c.connected == true)[0].send('broadcast', 'wullo wallo');
-    }
-  </script>
-</head>
+      // var i = 10;
+      // var conns = [];
+      // while (i > 0) {
+      //   ((it) => {
+      //     var snub = new snubWs('ws://username:password@localhost:8585');
+      //     snub.on('connect', function () {
+      //       console.log('Connected snub' + it);
+      //       snub.send('snub' + it, 2);
 
-<body>
-  Open console log for output.
-</body>
+      //       snub.send('do-math', [2, 3, 4, 5], function (response) {
+      //         console.log('snub' + it + ' math =>', response);
+      //       });
+      //     });
+      //     snub.on('disconnected', function (message) {
+      //       console.log('snub' + it + ' => disconnected');
+      //     });
+      //     snub.on('hull0', function (message) {
+      //       console.log('got msg' + it + ' => ' + message);
+      //     });
+      //     snub.on('channel3', function (message) {
+      //       console.log('got msg' + it + ' => ' + message);
+      //     });
+      //     conns.push(snub);
+      //   })(i);
 
+      //   i--;
+      // }
+
+      // function whoOnline() {
+      //   conns
+      //     .filter((c) => c.connected == true)[0]
+      //     .send('whos-online', null, function (response) {
+      //       console.log(response);
+      //     });
+      // }
+
+      // function broadcast() {
+      //   conns
+      //     .filter((c) => c.connected == true)[0]
+      //     .send('broadcast', 'wullo wallo');
+      // }
+    </script>
+  </head>
+
+  <body>
+    Open console log for output.
+  </body>
 </html>

@@ -27,13 +27,13 @@ module.exports = function (config) {
       multiLogin: true, // can the same user be connected more than once
       authTimeout: 3000,
       throttle: [50, 5000], // X number of messages per Y milliseconds.
-      idleTimeout: Math.max(1000 * 60 * 60, 12000), // disconnect if nothing has come from client in x ms 1 hour default
+      idleTimeout: 1000 * 60 * 60, // disconnect if nothing has come from client in x ms 1 hour default
       instanceId: process.pid + '_' + Date.now(),
       error: (_) => {},
     },
     config || {}
   );
-  config.idleTimeout = Math.max(config.idleTimeout, 1000 * 6 * 5); // min 5 minute on idle timeout
+  config.idleTimeout = Math.max(config.idleTimeout, 1000 * 60 * 5); // min 5 minute on idle timeout
 
   if (config.debug) console.log('Snub-ws Init', config);
 
@@ -43,7 +43,13 @@ module.exports = function (config) {
     var trackedInstances = new Set();
 
     setInterval((_) => {
-      if (config.debug) console.log('Snub-Ws Interval');
+      if (config.debug)
+        console.log(
+          `Snub-Ws Interval \n` +
+            `IID: ${config.instanceId}\n` +
+            `Local CLients: ${socketClients.length}\n` +
+            `Tracked CLients: ${trackedClients.length}\n\n`
+        );
       socketClients.forEach((ws) => {
         // time to idle this connection out
         if (ws.lastMsgTime < Date.now() - config.idleTimeout) {
@@ -52,7 +58,7 @@ module.exports = function (config) {
         }
 
         // send ping to connection that will soon idle out
-        if (ws.lastMsgTime < Date.now() - (config.idleTimeout - 6000)) {
+        if (ws.lastMsgTime < Date.now() - (config.idleTimeout - 1000 * 60)) {
           wsSend(ws, '_ping', Date.now());
         }
       });
@@ -150,7 +156,7 @@ module.exports = function (config) {
           ws.lastMsgTime = Date.now();
           if (event === '_auth') return wsValidateAuth(ws, payload);
           if (event === '_ping') return wsSend(ws, '_pong', payload);
-          if (event === '_pong') return console.log('gotPong');
+          if (event === '_pong') return; //console.log('gotPong');
 
           if (config.throttle) {
             ws.recent = ws.recent.filter(
@@ -243,6 +249,8 @@ module.exports = function (config) {
 
     snub.on('ws_internal:tracked-client-remove', function (clientIds) {
       if (!Array.isArray(clientIds)) clientIds = [clientIds];
+      if (config.debug)
+        console.log('Snub-ws remove tracked clients', clientIds);
       var clients = [];
       clientIds.forEach((clientId) => {
         var idx = trackedClients.findIndex((tc) => tc.id === clientId);
@@ -261,7 +269,6 @@ module.exports = function (config) {
             JSON.parse(JSON.stringify(clients))
           )
           .send();
-      if (config.debug) console.log('!trackedClients', trackedClients.length);
     });
 
     // on launch get list of tracked clients from other instances
@@ -345,7 +352,7 @@ module.exports = function (config) {
           return true;
         })
         .map((ws) => ws.state);
-      snub.mono('ws_internal:tracked-client-upsert', clients).send();
+      snub.poly('ws_internal:tracked-client-upsert', clients).send();
       if (clients.length > 0 && reply) {
         reply(clients);
       }
@@ -367,7 +374,7 @@ module.exports = function (config) {
           return true;
         })
         .map((ws) => ws.state);
-      snub.mono('ws_internal:tracked-client-upsert', clients).send();
+      snub.poly('ws_internal:tracked-client-upsert', clients).send();
       if (clients.length > 0 && reply) {
         reply(clients);
       }
@@ -388,7 +395,7 @@ module.exports = function (config) {
           return true;
         })
         .map((ws) => ws.state);
-      snub.mono('ws_internal:tracked-client-upsert', clients).send();
+      snub.poly('ws_internal:tracked-client-upsert', clients).send();
       if (clients.length > 0 && reply) {
         reply(clients);
       }
@@ -411,7 +418,7 @@ module.exports = function (config) {
           return true;
         })
         .map((ws) => ws.state);
-      snub.mono('ws_internal:tracked-client-upsert', clients).send();
+      snub.poly('ws_internal:tracked-client-upsert', clients).send();
       if (clients.length > 0 && reply) {
         reply(clients);
       }
@@ -462,6 +469,8 @@ module.exports = function (config) {
 
     function upsertTrackedClients(clients) {
       if (!Array.isArray(clients)) clients = [clients];
+      if (config.debug)
+        console.log('Snub-ws tracked clients upsert', clients.length);
       clients.forEach((c) => {
         if (!c.authenticated) return;
         var existing = trackedClients.find((tc) => tc.id === c.id);
@@ -530,7 +539,7 @@ module.exports = function (config) {
         },
         config.multiLogin ? 0 : 200
       );
-      snub.mono('ws_internal:tracked-client-upsert', ws.state).send();
+      snub.poly('ws_internal:tracked-client-upsert', ws.state).send();
 
       if (config.debug) console.log('Snub-ws wsAcceptAuth', ws);
     }
@@ -545,7 +554,7 @@ module.exports = function (config) {
       if (ws.dead) return;
       wsSend(ws, '_kickConnection', reason);
       ws.end(1000, reason);
-      if (config.debug) console.log('Snub-ws wsKick');
+      if (config.debug) console.log('Snub-ws wsKick', reason);
     }
 
     // send msg to client
@@ -553,7 +562,9 @@ module.exports = function (config) {
       if (ws.dead) return;
       var sendString = JSON.stringify([event, payload]);
       const msgHash = hashString(sendString);
-      if (msgHash === ws.lastMsgHash) return;
+      // block dupe messages going to the client within 5 seconds
+      if (msgHash === ws.lastMsgHash && Date.now() - ws.lastMsgTime < 5000)
+        return;
       ws.lastMsgHash = msgHash;
       ws.send(sendString);
     }
