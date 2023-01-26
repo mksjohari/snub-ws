@@ -38,17 +38,56 @@ module.exports = function (config) {
   if (config.debug) console.log('Snub-ws Init', config);
 
   return function (snub) {
-    var socketClients = [];
-    var trackedClients = [];
-    var trackedInstances = new Set();
+    var socketClients = new Map(); // clients connected to this instance
+    socketClients.matchFn = function (searches = [], fn = (_) => {}) {
+      var matches = [];
+      searches.forEach((search) => {
+        if (this.has(search)) {
+          fn(this.get(search));
+          matches.push(this.get(search));
+        }
+        this.forEach((socketClient) => {
+          if (socketClient.state.username !== search) return;
+          matches.push(socketClient);
+          fn(socketClient);
+        });
+      });
+      return matches;
+    };
+    socketClients.array = function () {
+      var clients = [];
+      this.forEach((client) => {
+        clients.push(client);
+      });
+      return clients;
+    };
+
+    socketClients.authedClients = function (fn = (_) => {}) {
+      var clients = [];
+      this.forEach((client) => {
+        if (!client.authenticated) return;
+        fn(client);
+        clients.push(client);
+      });
+      return clients;
+    };
+    var trackedClients = new Map(); // tracked clients connected to all instances
+    trackedClients.array = function () {
+      var clients = [];
+      this.forEach((client) => {
+        clients.push(client);
+      });
+      return clients;
+    };
+    var trackedInstances = new Set(); // all known snub-ws instances
 
     setInterval((_) => {
       if (config.debug)
         console.log(
           `Snub-Ws Interval \n` +
             `IID: ${config.instanceId}\n` +
-            `Local CLients: ${socketClients.length}\n` +
-            `Tracked CLients: ${trackedClients.length}\n\n`
+            `Local CLients: ${socketClients.size}\n` +
+            `Tracked CLients: ${trackedClients.size}\n\n`
         );
       socketClients.forEach((ws) => {
         // time to idle this connection out
@@ -125,7 +164,8 @@ module.exports = function (config) {
             },
           });
 
-          socketClients.push(ws);
+          // socketClients.push(ws);
+          socketClients.set(ws.id, ws);
 
           if (config.auth)
             setTimeout((_) => {
@@ -156,7 +196,7 @@ module.exports = function (config) {
           ws.lastMsgTime = Date.now();
           if (event === '_auth') return wsValidateAuth(ws, payload);
           if (event === '_ping') return wsSend(ws, '_pong', payload);
-          if (event === '_pong') return; //console.log('gotPong');
+          if (event === '_pong') return;
 
           if (config.throttle) {
             ws.recent = ws.recent.filter(
@@ -200,8 +240,7 @@ module.exports = function (config) {
           snub.poly('ws_internal:tracked-client-remove', ws.id).send();
           // wait 15 seconds before cleaning up the socket from the client list
           await justWait(15000);
-          var idx = socketClients.findIndex((i) => i === ws);
-          socketClients.splice(idx, 1);
+          socketClients.delete(ws.id);
         },
       })
       .any('/*', (res, req) => {
@@ -232,10 +271,7 @@ module.exports = function (config) {
     cleanUpFns.push((_) => {
       if (config.debug) console.log('Snub WS Cleanup');
       snub
-        .poly(
-          'ws_internal:tracked-client-remove',
-          socketClients.map((c) => c.state.id)
-        )
+        .poly('ws_internal:tracked-client-remove', [...socketClients.keys()])
         .send();
       snub
         .poly('ws_internal:tracked-instance', {
@@ -253,22 +289,14 @@ module.exports = function (config) {
         console.log('Snub-ws remove tracked clients', clientIds);
       var clients = [];
       clientIds.forEach((clientId) => {
-        var idx = trackedClients.findIndex((tc) => tc.id === clientId);
-        if (idx > -1) {
-          var rClient = trackedClients.splice(idx, 1)[0];
-          var socketClient = socketClients.find(
-            (sc) => sc.state.id === clientId
+        if (socketClients.has(clientId))
+          clients.push(
+            JSON.parse(JSON.stringify(socketClients.get(clientId).state))
           );
-          if (socketClient) clients.push(rClient);
-        }
+        trackedClients.delete(clientId);
       });
       if (clients.length)
-        snub
-          .poly(
-            'ws:connected-clients-offline',
-            JSON.parse(JSON.stringify(clients))
-          )
-          .send();
+        snub.poly('ws:connected-clients-offline', clients).send();
     });
 
     // on launch get list of tracked clients from other instances
@@ -276,9 +304,7 @@ module.exports = function (config) {
 
     snub.on('ws_internal:tracked-client-fetch', (_) => {
       var clientStates = socketClients
-        .filter((client) => {
-          return client.state.authenticated;
-        })
+        .authedClients()
         .map((client) => client.state);
       if (clientStates.length)
         snub.poly('ws_internal:tracked-client-upsert', clientStates).send();
@@ -286,33 +312,28 @@ module.exports = function (config) {
 
     Object.defineProperty(snub, 'wsConnectedClients', {
       get: function () {
-        return JSON.parse(JSON.stringify(trackedClients));
+        return trackedClients.array();
       },
     });
 
     snub.on('ws:send-all', function (payload) {
-      socketClients.forEach((ws) => {
-        if (ws.authenticated) wsSend(ws, ...payload);
+      socketClients.authedClients((ws) => {
+        wsSend(ws, ...payload);
       });
     });
 
     snub.on('ws:send:*', function (payload, n1, channel) {
       var sendTo = channel.split(':').pop().split(',');
       var [event, ePayload] = payload;
-      socketClients.forEach((ws) => {
-        if (
-          sendTo.includes(ws.state.id) ||
-          sendTo.includes(ws.state.username)
-        ) {
-          wsSend(ws, event, ePayload);
-        }
+      socketClients.matchFn(sendTo, (ws) => {
+        wsSend(ws, event, ePayload);
       });
     });
 
     snub.on('ws:send-channel:*', function (payload, n1, channel) {
       var channels = channel.split(':').pop().split(',');
       var [event, ePayload] = payload;
-      socketClients.forEach((ws) => {
+      socketClients.array().forEach((ws) => {
         if (channels.some((channel) => ws.state.channels.includes(channel)))
           wsSend(ws, event, ePayload);
       });
@@ -339,105 +360,87 @@ module.exports = function (config) {
           return delete metaObj[k];
         }
       });
+      var idsOrUsername = channel.split(':').pop().split(',');
 
-      var clients = channel.split(':').pop().split(',');
-      clients = socketClients
-        .filter((ws) => {
-          if (
-            !clients.includes(ws.state.id) &&
-            !clients.includes(ws.state.username)
-          )
-            return false;
+      var clientStates = socketClients
+        .matchFn(idsOrUsername, (ws) => {
           Object.assign(ws.metaObj, metaObj);
-          return true;
         })
         .map((ws) => ws.state);
-      snub.poly('ws_internal:tracked-client-upsert', clients).send();
-      if (clients.length > 0 && reply) {
-        reply(clients);
+      if (clientStates.length)
+        snub.poly('ws_internal:tracked-client-upsert', clientStates).send();
+      if (clientStates.length > 0 && reply) {
+        reply(clientStates);
       }
     });
 
-    // add, set and delete channels for a client
+    // add, set and delete channels for a client, accepts id or username
     snub.on('ws:add-channel:*', function (arrayOfChannels, reply, channel) {
       if (typeof arrayOfChannels === 'string')
         arrayOfChannels = [arrayOfChannels];
-      var clients = channel.split(':').pop().split(',');
-      clients = socketClients
-        .filter((ws) => {
-          if (
-            !clients.includes(ws.state.id) &&
-            !clients.includes(ws.state.username)
-          )
-            return false;
-          ws.channels = [].concat(ws.channels, arrayOfChannels);
-          return true;
+
+      var idsOrUsername = channel.split(':').pop().split(',');
+      var clientStates = socketClients
+        .matchFn(idsOrUsername, (ws) => {
+          ws.channels = [...new Set([].concat(ws.channels, arrayOfChannels))];
         })
         .map((ws) => ws.state);
-      snub.poly('ws_internal:tracked-client-upsert', clients).send();
-      if (clients.length > 0 && reply) {
-        reply(clients);
+      if (clientStates.length)
+        snub.poly('ws_internal:tracked-client-upsert', clientStates).send();
+      if (clientStates.length > 0 && reply) {
+        reply(clientStates);
       }
     });
 
     snub.on('ws:set-channel:*', function (arrayOfChannels, reply, channel) {
       if (typeof arrayOfChannels === 'string')
         arrayOfChannels = [arrayOfChannels];
-      var clients = channel.split(':').pop().split(',');
-      clients = socketClients
-        .filter((ws) => {
-          if (
-            !clients.includes(ws.state.id) &&
-            !clients.includes(ws.state.username)
-          )
-            return false;
-          ws.channels = arrayOfChannels;
-          return true;
+
+      var idsOrUsername = channel.split(':').pop().split(',');
+      var clientStates = socketClients
+        .matchFn(idsOrUsername, (ws) => {
+          ws.channels = [...new Set(arrayOfChannels)];
         })
         .map((ws) => ws.state);
-      snub.poly('ws_internal:tracked-client-upsert', clients).send();
-      if (clients.length > 0 && reply) {
-        reply(clients);
+      if (clientStates.length)
+        snub.poly('ws_internal:tracked-client-upsert', clientStates).send();
+      if (clientStates.length > 0 && reply) {
+        reply(clientStates);
       }
     });
 
     snub.on('ws:del-channel:*', function (arrayOfChannels, reply, channel) {
       if (typeof arrayOfChannels === 'string')
         arrayOfChannels = [arrayOfChannels];
-      var clients = channel.split(':').pop().split(',');
-      clients = socketClients
-        .filter((ws) => {
-          if (
-            !clients.includes(ws.state.id) &&
-            !clients.includes(ws.state.username)
-          )
-            return false;
-          ws.channels = ws.state.channels.filter(
-            (channel) => !(arrayOfChannels.indexOf(channel) > -1)
-          );
-          return true;
+
+      var idsOrUsername = channel.split(':').pop().split(',');
+      var clientStates = socketClients
+        .matchFn(idsOrUsername, (ws) => {
+          ws.channels = [
+            ...new Set(
+              ws.channels.filter((c) => {
+                return !arrayOfChannels.includes(c);
+              })
+            ),
+          ];
         })
         .map((ws) => ws.state);
-      snub.poly('ws_internal:tracked-client-upsert', clients).send();
-      if (clients.length > 0 && reply) {
-        reply(clients);
+      if (clientStates.length)
+        snub.poly('ws_internal:tracked-client-upsert', clientStates).send();
+      if (clientStates.length > 0 && reply) {
+        reply(clientStates);
       }
     });
 
     snub.on('ws:kick:*', function (message, n2, channel) {
       var sendTo = channel.split(':').pop().split(',');
-      socketClients.forEach((ws) => {
-        if (
-          !sendTo.includes(ws.state.id) &&
-          !sendTo.includes(ws.state.username)
-        )
-          return;
+      socketClients.matchFn(sendTo, (ws) => {
         wsKick(ws, message);
         ws.authenticated = false;
       });
     });
     snub.on('ws:kick-all', function (message = 'kick') {
-      socketClients.forEach((ws) => {
+      socketClients.array().forEach((ws) => {
         wsKick(ws, message);
         ws.authenticated = false;
       });
@@ -445,15 +448,9 @@ module.exports = function (config) {
 
     snub.on('ws_internal:client-authenticated', function (wsState) {
       if (config.multiLogin === false) {
-        socketClients.forEach((ws) => {
-          if (
-            ws.state.username === wsState.username &&
-            ws.state.id !== wsState.id &&
-            ws.connectTime < wsState.connectTime
-          ) {
+        socketClients.matchFn([wsState.id, wsState.username], (ws) => {
+          if (ws.connectTime < wsState.connectTime)
             return wsKick(ws, 'DUPE_LOGIN');
-          }
-          return false;
         });
       }
     });
@@ -469,22 +466,19 @@ module.exports = function (config) {
 
     function upsertTrackedClients(clients) {
       if (!Array.isArray(clients)) clients = [clients];
-      if (config.debug)
-        console.log('Snub-ws tracked clients upsert', clients.length);
-      clients.forEach((c) => {
-        if (!c.authenticated) return;
-        var existing = trackedClients.find((tc) => tc.id === c.id);
-        if (existing) {
-          return Object.assign(existing, c);
-        }
-        trackedClients.push(c);
+      if (config.debug) console.log('Snub-ws tracked clients upsert', clients);
+      var clientsToUpdate = [];
+      clients.forEach((clientObj) => {
+        if (!clientObj.authenticated) return;
+        var newObj = Object.assign(
+          trackedClients.get(clientObj.id) || {},
+          clientObj
+        );
+        trackedClients.set(clientObj.id, newObj);
+        if (socketClients.has(clientObj.id)) clientsToUpdate.push(newObj);
       });
-      snub
-        .poly(
-          'ws:connected-clients-update',
-          JSON.parse(JSON.stringify(clients))
-        )
-        .send();
+      if (clientsToUpdate.length)
+        snub.poly('ws:connected-clients-update', clientsToUpdate).send();
     }
 
     function wsValidateAuth(ws, authPayload) {

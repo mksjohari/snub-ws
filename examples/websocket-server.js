@@ -1,6 +1,6 @@
 const Snub = require('snub');
 const snub = new Snub({
-  debug: false,
+  debug: true,
 });
 const SnubWS = require('../snub-ws.js');
 
@@ -39,17 +39,43 @@ snub.on('ws:client-authenticated', function (payload) {
     .send();
 });
 
-snub.on('ws:do-math', function (event, reply) {
-  console.log('domath');
+snub.on('ws:my-state', function (event, reply) {
+  console.log('my-state', event);
   // if the event for the client is expecting a reply we can do so.
-  if (typeof reply === 'function')
-    reply(
-      process.pid +
-        '=' +
-        event.payload.reduce((p, c) => {
-          return p + c;
-        }, 0)
-    );
+  reply(event.from);
+});
+
+snub.on('ws:command', function (event, reply) {
+  console.log('command', event.payload);
+  if (event.payload.command === 'set-channels') {
+    console.log('setting channels', event.from.id, event.payload.channels);
+    snub.poly('ws:set-channel:' + event.from.id, event.payload.channels).send();
+  }
+
+  if (event.payload.command === 'add-channels') {
+    console.log('adding channels', event.from.id, event.payload.channels);
+    snub.poly('ws:add-channel:' + event.from.id, event.payload.channels).send();
+  }
+
+  if (event.payload.command === 'del-channels') {
+    console.log('deleting channels', event.from.id, event.payload.channels);
+    snub.poly('ws:del-channel:' + event.from.id, event.payload.channels).send();
+  }
+
+  if (event.payload.command === 'set-meta') {
+    console.log('setting meta', event.from.id, event.payload.meta);
+    snub.poly('ws:set-meta:' + event.from.id, event.payload.meta).send();
+  }
+
+  // reply(event.from);
+});
+
+snub.on('ws:connected-clients-update', async (clients) => {
+  console.log('!!!UPDATE', clients);
+});
+
+snub.on('ws:connected-clients-offline', async (clients) => {
+  console.log('!!!OFFLINE', clients);
 });
 
 snub.on('ws:broadcast', function (event) {
@@ -92,29 +118,16 @@ snub.on('ws:broadcast', function (event) {
 });
 
 snub.on('ws:whos-online', function (event, reply) {
-  var c = [];
-  // when c is fully populated we are going to need to send it
-  var sendReply = () => {
-    var r = [].concat(...c).map((cu) => cu.id);
-    reply(r);
-  };
+  console.log('whos online!!');
 
-  // force sendtimeout
-  var sendTimeout = setTimeout(sendReply, 4500);
-
-  // set a instance count higher than will ever be required
-  var count = 10;
   snub
-    .poly('ws:connected-clients')
+    .mono('ws:connected-clients')
     .replyAt((connected) => {
-      c.push(connected);
-      if (count === c.length) {
-        clearTimeout(sendTimeout);
-        sendReply();
-      }
+      console.log('connected', connected);
+      reply(connected);
     }, 6000)
     .send((listenCount) => {
-      count = listenCount;
+      console.log('Listen count', listenCount);
     });
 });
 

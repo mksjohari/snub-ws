@@ -1,11 +1,11 @@
 {
   "name": "snub-ws",
-  "version": "3.0.13",
+  "version": "3.0.14",
   "description": "WebSocket server middleware for snub",
   "main": "snub-ws.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "debug": "npx pm2 start websocket-server.js -i 4 && npx pm2 restart all && npx pm2 logs"
+    "debug": "npx pm2 del all; npx pm2 start examples/websocket-server.js -i 4 && npx pm2 restart all && npx pm2 logs"
   },
   "repository": {
     "type": "git",

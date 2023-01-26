@@ -89,41 +89,51 @@
         return $;
       };
 
-      var derp = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+      function connectClients(qty = 1) {
+        var derp = Array.from(Array(qty).keys());
+        var wsList = [];
+        derp.forEach((element) => {
+          var currentWs = new Ws('ws://username:password@localhost:8585', {
+            autoConnect: true,
+            onopen: (e) => {
+              console.log('SnubSocket Connected');
+              currentWs.json(['_auth', { username: 'username' }]);
+            },
+            onmessage: (e) => {
+              try {
+                var [key, value] = JSON.parse(e.data);
+                // handle the auth check
+                if (key === '_ping')
+                  // && Math.random() > 0.5
+                  return currentWs.json(['_pong']);
+                if (key === '_pong') return pingCheck();
+                if (key === '_acceptAuth') {
+                  console.log('Auth Accepted');
 
-      derp.forEach((element) => {
-        var currentWs = new Ws('ws://username:password@localhost:8585', {
-          autoConnect: true,
-          onopen: (e) => {
-            console.log('SnubSocket Connected');
-            currentWs.json(['_auth', { username: 'username' }]);
-          },
-          onmessage: (e) => {
-            try {
-              var [key, value] = JSON.parse(e.data);
-              // handle the auth check
-              if (key === '_ping')
-                // && Math.random() > 0.5
-                return currentWs.json(['_pong']);
-              if (key === '_pong') return pingCheck();
-              if (key === '_acceptAuth') {
-                console.log('Auth Accepted');
-                return;
+                  currentWs.json([
+                    'my-state',
+                    { username: 'username' },
+                    'r' + Date.now(),
+                  ]);
+                  return;
+                }
+
+                console.log('Message', key, value);
+              } catch (error) {
+                console.error(error);
               }
-
-              console.log('Message', key, value);
-            } catch (error) {
-              console.error(error);
-            }
-          },
-          onreconnect: (e) => console.log('Reconnecting...', e),
-          onmaximum: (e) => console.log('Stop Attempting!', e),
-          onclose: (e) => {
-            console.log('socket closed');
-          },
-          onerror: (e) => console.warn('Error:', e),
+            },
+            onreconnect: (e) => console.log('Reconnecting...', e),
+            onmaximum: (e) => console.log('Stop Attempting!', e),
+            onclose: (e) => {
+              console.log('socket closed');
+            },
+            onerror: (e) => console.warn('Error:', e),
+          });
+          wsList.push(currentWs);
         });
-      });
+        return wsList;
+      }
 
       // var i = 10;
       // var conns = [];
