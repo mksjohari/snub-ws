@@ -5,7 +5,7 @@ const snub = new Snub({
 const SnubWS = require('../snub-ws.js');
 
 const snubws = new SnubWS({
-  debug: true,
+  debug: false,
   mutliLogin: true,
   idleTimeout: 100,
   auth:
@@ -74,8 +74,10 @@ snub.on('ws:connected-clients-update', async (clients) => {
   console.log('!!!UPDATE', clients);
 });
 
+var dcTotal = 0;
 snub.on('ws:connected-clients-offline', async (clients) => {
-  console.log('!!!OFFLINE', clients);
+  dcTotal += clients.length;
+  console.log('DCTOTAL: ', dcTotal);
 });
 
 snub.on('ws:broadcast', function (event) {

@@ -65,7 +65,7 @@ module.exports = function (config) {
     socketClients.authedClients = function (fn = (_) => {}) {
       var clients = [];
       this.forEach((client) => {
-        if (!client.authenticated) return;
+        if (!client.authenticated || !client.dead) return;
         fn(client);
         clients.push(client);
       });
@@ -144,6 +144,7 @@ module.exports = function (config) {
               snub.generateUID(),
             auth: {},
             channels: [],
+            dead: false,
             authenticated: false,
             connectTime: Date.now(),
             recent: [],
@@ -295,8 +296,10 @@ module.exports = function (config) {
           );
         trackedClients.delete(clientId);
       });
-      if (clients.length)
+      if (clients.length) {
         snub.poly('ws:connected-clients-offline', clients).send();
+        snub.mono('ws:connected-clients-offline-mono', clients).send();
+      }
     });
 
     // on launch get list of tracked clients from other instances
@@ -477,8 +480,10 @@ module.exports = function (config) {
         trackedClients.set(clientObj.id, newObj);
         if (socketClients.has(clientObj.id)) clientsToUpdate.push(newObj);
       });
-      if (clientsToUpdate.length)
+      if (clientsToUpdate.length) {
         snub.poly('ws:connected-clients-update', clientsToUpdate).send();
+        snub.mono('ws:connected-clients-update-mono', clientsToUpdate).send();
+      }
     }
 
     function wsValidateAuth(ws, authPayload) {

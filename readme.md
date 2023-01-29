@@ -44,7 +44,9 @@ snub.use(snubws);
 auth can be passed of 3 things
 
 #### Function
+
 A function passed to auth
+
 ```javascript
 {
   auth: function (auth, accept) {
@@ -56,43 +58,52 @@ A function passed to auth
 ```
 
 ### Authenticating a client
+
 The first thing a client should do after connecting is send an authenitication message.
 username is required, the entire object will be passed to your authentication method.
+
 ```
 ['_auth', { username, password}];
 ```
 
 ### Sending messages from the client
+
 Web socket message objects should be JSON stringified arrays. The first item is always the event name followed by payload, followed by the replyId. Only event name is required.
+
 ```
 ['event-name', { payload }, replyId];
 ```
 
 #### String
+
 A string passed to auth will run the method as a snub event. Reply true or false.
+
 ```javascript
 {
-  auth: 'authenticate-client'
+  auth: 'authenticate-client';
 }
 
 snub.on('ws:authenticate-client', function (auth, reply) {
   console.log(auth);
-  if (auth.username == 'username')
-    return reply(true);
+  if (auth.username == 'username') return reply(true);
   reply(false);
 });
 ```
 
 #### Boolean
+
 A bool with false will authenticate any web-socket client connection.
+
 ```javascript
 {
-  auth: false
+  auth: false;
 }
 ```
 
 ### Events
+
 #### Client > Server
+
 When a client sends data to the server the event will be prefixed with **ws:**
 
 ```javascript
@@ -114,6 +125,7 @@ When a client sends data to the server the event will be prefixed with **ws:**
 ```
 
 Simple snub listener. inbound messages from client will be prefixed with **ws:**
+
 ```javascript
 snub.on('ws:do-math', function (event, reply) {
   console.log('domath');
@@ -124,37 +136,63 @@ snub.on('ws:do-math', function (event, reply) {
 #### Server > Client
 
 Send event to all clients
+
 ```javascript
-snub.poly('ws:send-all', ['event-name', {payload}]).send();
+snub.poly('ws:send-all', ['event-name', { payload }]).send();
 ```
+
 Send event to channel
+
 ```javascript
-snub.poly('ws:send-channel:' + 'channel6', ['event-name', {payload}]).send();
+snub.poly('ws:send-channel:' + 'channel6', ['event-name', { payload }]).send();
 ```
+
 Send event to multiple channels
+
 ```javascript
-snub.poly('ws:send-channel:' + ['channel6', 'channel2', 'channel3'].join(','), ['event-name', {payload}]).send();
+snub
+  .poly('ws:send-channel:' + ['channel6', 'channel2', 'channel3'].join(','), [
+    'event-name',
+    { payload },
+  ])
+  .send();
 ```
+
 Send event to client
+
 ```javascript
-snub.poly('ws:send:' + 'username', ['event-name', {payload}]).send();
+snub.poly('ws:send:' + 'username', ['event-name', { payload }]).send();
 // or
-snub.poly('ws:send:' + event.from.id, ['event-name', {payload}]).send();
+snub.poly('ws:send:' + event.from.id, ['event-name', { payload }]).send();
 ```
+
 Send event to multiple users
+
 ```javascript
-snub.poly('ws:send:' + ['user1', 'user2', 'user3'].join(','), ['event-name', {payload}]).send();
+snub
+  .poly('ws:send:' + ['user1', 'user2', 'user3'].join(','), [
+    'event-name',
+    { payload },
+  ])
+  .send();
 ```
 
 ### Channels
+
 // TODO
 
 ### Meta
+
 You can set meta against a client, which will be availbe in the **event.from.meta** object
+
 ```javascript
 snub.poly('ws:set-meta:' + 'username', { prop1: 'AOK' }).send();
 ```
 
+### WS Client emitted events
 
+`ws:connected-clients-update` will be poly emitted when client connects or client state changes.
+`ws:connected-clients-update` mono emitted as above
 
-
+`ws:connected-clients-offline` will be poly emitted with client state as payload when client disconects
+`ws:connected-clients-offline-mono` mono emitted event as above
