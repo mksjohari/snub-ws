@@ -51,7 +51,9 @@ snub.on('ws:command', function (event, reply) {
     console.log('setting channels', event.from.id, event.payload.channels);
     snub.poly('ws:set-channel:' + event.from.id, event.payload.channels).send();
   }
-
+  if (event.payload.command === 'send-all') {
+    snub.poly('ws:send-all', ['derp', { a: 1 }]).send();
+  }
   if (event.payload.command === 'add-channels') {
     console.log('adding channels', event.from.id, event.payload.channels);
     snub.poly('ws:add-channel:' + event.from.id, event.payload.channels).send();

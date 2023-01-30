@@ -65,7 +65,7 @@ module.exports = function (config) {
     socketClients.authedClients = function (fn = (_) => {}) {
       var clients = [];
       this.forEach((client) => {
-        if (!client.authenticated || !client.dead) return;
+        if (!client.authenticated || client.dead) return;
         fn(client);
         clients.push(client);
       });
