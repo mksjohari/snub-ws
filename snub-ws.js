@@ -90,7 +90,7 @@ module.exports = function (config) {
         this.forEach((trackedClient) => {
           if (trackedClient.username !== search) return;
           matches.push(trackedClient);
-          fn(socketClient);
+          fn(trackedClient);
         });
       });
       return matches;
