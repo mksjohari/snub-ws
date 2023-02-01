@@ -71,6 +71,7 @@ module.exports = function (config) {
       });
       return clients;
     };
+
     var trackedClients = new Map(); // tracked clients connected to all instances
     trackedClients.array = function () {
       var clients = [];
@@ -79,6 +80,22 @@ module.exports = function (config) {
       });
       return clients;
     };
+    trackedClients.matchFn = function (searches = [], fn = (_) => {}) {
+      var matches = [];
+      searches.forEach((search) => {
+        if (this.has(search)) {
+          fn(this.get(search));
+          matches.push(this.get(search));
+        }
+        this.forEach((trackedClient) => {
+          if (trackedClient.username !== search) return;
+          matches.push(trackedClient);
+          fn(socketClient);
+        });
+      });
+      return matches;
+    };
+
     var trackedInstances = new Set(); // all known snub-ws instances
 
     setInterval((_) => {
@@ -189,7 +206,7 @@ module.exports = function (config) {
             return false;
           if (
             event.match(
-              /^(send|kick|send-channel|set-meta|add-channel|set-channel|del-channel):/
+              /^(send|kick|send-channel|set-meta|add-channel|set-channel|del-channel|get-clients):/
             )
           )
             return false;
@@ -342,6 +359,15 @@ module.exports = function (config) {
       });
     });
 
+    snub.on('ws:get-clients:*', function (_obj, reply, channel) {
+      var idsOrUsername = channel.split(':').pop().split(',');
+      var clientStates = [];
+      trackedClients.matchFn(idsOrUsername, (client) => {
+        clientStates.push(client);
+      });
+      reply(clientStates);
+    });
+
     snub.on('ws:set-meta:*', function (metaObj, reply, channel) {
       Object.keys(metaObj).forEach((k) => {
         if (Array.isArray(metaObj[k])) {
@@ -365,11 +391,12 @@ module.exports = function (config) {
       });
       var idsOrUsername = channel.split(':').pop().split(',');
 
-      var clientStates = socketClients
-        .matchFn(idsOrUsername, (ws) => {
-          Object.assign(ws.metaObj, metaObj);
-        })
-        .map((ws) => ws.state);
+      var clientStates = [];
+      socketClients.matchFn(idsOrUsername, (ws) => {
+        var pre = JSON.stringify(ws.metaObj);
+        Object.assign(ws.metaObj, metaObj);
+        if (pre !== JSON.stringify(ws.metaObj)) clientStates.push(ws.state);
+      });
       if (clientStates.length)
         snub.poly('ws_internal:tracked-client-upsert', clientStates).send();
       if (clientStates.length > 0 && reply) {
@@ -383,11 +410,12 @@ module.exports = function (config) {
         arrayOfChannels = [arrayOfChannels];
 
       var idsOrUsername = channel.split(':').pop().split(',');
-      var clientStates = socketClients
-        .matchFn(idsOrUsername, (ws) => {
-          ws.channels = [...new Set([].concat(ws.channels, arrayOfChannels))];
-        })
-        .map((ws) => ws.state);
+      var clientStates = [];
+      socketClients.matchFn(idsOrUsername, (ws) => {
+        var pre = JSON.stringify(ws.channels);
+        ws.channels = [...new Set([].concat(ws.channels, arrayOfChannels))];
+        if (pre !== JSON.stringify(ws.channels)) clientStates.push(ws.state);
+      });
       if (clientStates.length)
         snub.poly('ws_internal:tracked-client-upsert', clientStates).send();
       if (clientStates.length > 0 && reply) {
@@ -400,11 +428,12 @@ module.exports = function (config) {
         arrayOfChannels = [arrayOfChannels];
 
       var idsOrUsername = channel.split(':').pop().split(',');
-      var clientStates = socketClients
-        .matchFn(idsOrUsername, (ws) => {
-          ws.channels = [...new Set(arrayOfChannels)];
-        })
-        .map((ws) => ws.state);
+      var clientStates = [];
+      socketClients.matchFn(idsOrUsername, (ws) => {
+        var pre = JSON.stringify(ws.channels);
+        ws.channels = [...new Set(arrayOfChannels)];
+        if (pre !== JSON.stringify(ws.channels)) clientStates.push(ws.state);
+      });
       if (clientStates.length)
         snub.poly('ws_internal:tracked-client-upsert', clientStates).send();
       if (clientStates.length > 0 && reply) {
@@ -417,17 +446,18 @@ module.exports = function (config) {
         arrayOfChannels = [arrayOfChannels];
 
       var idsOrUsername = channel.split(':').pop().split(',');
-      var clientStates = socketClients
-        .matchFn(idsOrUsername, (ws) => {
-          ws.channels = [
-            ...new Set(
-              ws.channels.filter((c) => {
-                return !arrayOfChannels.includes(c);
-              })
-            ),
-          ];
-        })
-        .map((ws) => ws.state);
+      var clientStates = [];
+      socketClients.matchFn(idsOrUsername, (ws) => {
+        var pre = JSON.stringify(ws.channels);
+        ws.channels = [
+          ...new Set(
+            ws.channels.filter((c) => {
+              return !arrayOfChannels.includes(c);
+            })
+          ),
+        ];
+        if (pre !== JSON.stringify(ws.channels)) clientStates.push(ws.state);
+      });
       if (clientStates.length)
         snub.poly('ws_internal:tracked-client-upsert', clientStates).send();
       if (clientStates.length > 0 && reply) {

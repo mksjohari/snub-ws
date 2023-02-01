@@ -189,6 +189,15 @@ You can set meta against a client, which will be availbe in the **event.from.met
 snub.poly('ws:set-meta:' + 'username', { prop1: 'AOK' }).send();
 ```
 
+```javascript
+snub
+  .mono('ws:get-clients:' + 'usernameOrId')
+  .replyAt((clients) => {
+    // clients = Array of client states Inludes client.meta
+  })
+  .send();
+```
+
 ### WS Client emitted events
 
 `ws:connected-clients-update` will be poly emitted when client connects or client state changes.

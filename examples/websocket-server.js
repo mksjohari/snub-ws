@@ -1,6 +1,6 @@
 const Snub = require('snub');
 const snub = new Snub({
-  debug: true,
+  debug: false,
 });
 const SnubWS = require('../snub-ws.js');
 
@@ -28,19 +28,26 @@ snub.on('ws:authenticate-client', function (auth, reply) {
   reply(false);
 });
 
+var countTotal = 0;
 snub.on('ws:client-authenticated', function (payload) {
   // we can send a message to a single user.
   // this will work with polly but every snub instance will send the message to the client, not alway desired.
-  // console.log(
-  //   'got Authed user data=> ' + process.pid + ' - ' + JSON.stringify(payload)
-  // );
+  console.log(
+    'got Authed user data=> ' + process.pid + ' - ' + JSON.stringify(payload)
+  );
   snub
     .poly('ws:send:' + payload.id, ['hello', 'yay! you authenticated'])
     .send();
+
+  countTotal++;
+});
+
+snub.on('ws:connected-clients-update-mono', (payload) => {
+  console.log('connected client update', payload);
 });
 
 snub.on('ws:my-state', function (event, reply) {
-  console.log('my-state', event);
+  // console.log('my-state', event);
   // if the event for the client is expecting a reply we can do so.
   reply(event.from);
 });
@@ -69,17 +76,31 @@ snub.on('ws:command', function (event, reply) {
     snub.poly('ws:set-meta:' + event.from.id, event.payload.meta).send();
   }
 
+  if (event.payload.command === 'get-clients') {
+    console.log('getclients', event.from.id, event.payload.ids);
+    snub
+      .mono('ws:get-clients:' + event.payload.ids)
+      .replyAt((p) => {
+        console.log('get-client', p);
+      })
+      .send();
+  }
+
   // reply(event.from);
 });
 
-snub.on('ws:connected-clients-update', async (clients) => {
-  console.log('!!!UPDATE', clients);
-});
+setInterval((_) => {
+  snub
+    .mono('ws:connected-clients')
+    .replyAt((clients) => {
+      console.log('CLIENTS', clients.length);
+      console.log('OFFSET?', countTotal);
+    })
+    .send();
+}, 30000);
 
-var dcTotal = 0;
-snub.on('ws:connected-clients-offline', async (clients) => {
-  dcTotal += clients.length;
-  console.log('DCTOTAL: ', dcTotal);
+snub.on('ws:connected-clients-offline-mono', async (clients) => {
+  countTotal -= clients.length;
 });
 
 snub.on('ws:broadcast', function (event) {

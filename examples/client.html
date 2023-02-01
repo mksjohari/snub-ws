@@ -89,6 +89,16 @@
         return $;
       };
       var wsList = [];
+
+      function killClients(qty) {
+        var derp = Array.from(Array(qty).keys());
+
+        derp.forEach((element, idx) => {
+          if (!wsList[0]) return;
+          wsList[0].close();
+          wsList.splice(0, 1);
+        });
+      }
       function connectClients(qty = 1) {
         var derp = Array.from(Array(qty).keys());
 
