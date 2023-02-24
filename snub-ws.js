@@ -29,6 +29,7 @@ module.exports = function (config) {
       throttle: [50, 5000], // X number of messages per Y milliseconds.
       idleTimeout: 1000 * 60 * 60, // disconnect if nothing has come from client in x ms 1 hour default
       instanceId: process.pid + '_' + Date.now(),
+      includeRaw: false, // for including raw client messages, debug purposes only.
       error: (_) => {},
     },
     config || {}
@@ -97,6 +98,17 @@ module.exports = function (config) {
     };
 
     var trackedInstances = new Set(); // all known snub-ws instances
+    trackedInstances.add(config.instanceId);
+    snub.on('ws_internal:tracked-instance', (i) => {
+      if (i.online) return trackedInstances.add(i.instanceId);
+      trackedInstances.delete(i.instanceId);
+    });
+    snub
+      .poly('ws_internal:tracked-instance', {
+        instanceId: config.instanceId,
+        online: true,
+      })
+      .send();
 
     setInterval((_) => {
       if (config.debug)
@@ -106,6 +118,8 @@ module.exports = function (config) {
             `Local CLients: ${socketClients.size}\n` +
             `Tracked CLients: ${trackedClients.size}\n\n`
         );
+
+      var localConnectedIdList = [];
       socketClients.forEach((ws) => {
         // time to idle this connection out
         if (ws.lastMsgTime < Date.now() - config.idleTimeout) {
@@ -117,7 +131,15 @@ module.exports = function (config) {
         if (ws.lastMsgTime < Date.now() - (config.idleTimeout - 1000 * 60)) {
           wsSend(ws, '_ping', Date.now());
         }
+        localConnectedIdList.push(ws.id);
       });
+
+      snub
+        .poly('ws_internal:tracked-client-check', {
+          instanceId: config.instanceId,
+          clientIds: localConnectedIdList,
+        })
+        .send();
     }, config.idleTimeout / 4);
 
     uWS
@@ -230,6 +252,7 @@ module.exports = function (config) {
             .mono('ws:' + event, {
               from: ws.state,
               payload,
+              _raw: config.includeRaw ? message : undefined,
               _ts: Date.now(),
             })
             .replyAt(
@@ -274,18 +297,6 @@ module.exports = function (config) {
         }
       });
 
-    trackedInstances.add(config.instanceId);
-    snub.on('ws_internal:tracked-instance', (i) => {
-      if (i.online) return trackedInstances.add(i.instanceId);
-      trackedInstances.delete(i.instanceId);
-    });
-    snub
-      .poly('ws_internal:tracked-instance', {
-        instanceId: config.instanceId,
-        online: true,
-      })
-      .send();
-
     cleanUpFns.push((_) => {
       if (config.debug) console.log('Snub WS Cleanup');
       snub
@@ -300,6 +311,17 @@ module.exports = function (config) {
     });
 
     snub.on('ws_internal:tracked-client-upsert', upsertTrackedClients);
+
+    snub.on('ws_internal:tracked-client-check', function (instanceObj) {
+      var { instanceId, clientIds } = instanceObj;
+      var keys = [...trackedClients.keys()].filter((k) => {
+        return k.startsWith(instanceId);
+      });
+      console.log('CHECK!', keys, clientIds);
+      keys.forEach((id) => {
+        if (!clientIds.includes(id)) trackedClients.delete(id);
+      });
+    });
 
     snub.on('ws_internal:tracked-client-remove', function (clientIds) {
       if (!Array.isArray(clientIds)) clientIds = [clientIds];
@@ -495,6 +517,14 @@ module.exports = function (config) {
           (c) => clientIds.includes(c.id) || clientIds.includes(c.username)
         )
       );
+    });
+
+    snub.on('ws:tracked-client-stat', (_data, reply) => {
+      reply({
+        snubInstanceId: config.instanceId,
+        localClientCount: socketClients.size,
+        trackedClientCount: trackedClients.size,
+      });
     });
 
     function upsertTrackedClients(clients) {

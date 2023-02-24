@@ -5,7 +5,7 @@ const snub = new Snub({
 const SnubWS = require('../snub-ws.js');
 
 const snubws = new SnubWS({
-  debug: false,
+  debug: true,
   mutliLogin: true,
   idleTimeout: 100,
   auth:
@@ -90,13 +90,14 @@ snub.on('ws:command', function (event, reply) {
 });
 
 setInterval((_) => {
-  snub
-    .mono('ws:connected-clients')
-    .replyAt((clients) => {
-      console.log('CLIENTS', clients.length);
-      console.log('OFFSET?', countTotal);
-    })
-    .send();
+  // snub.poly('snubws:tracked-client-stat').replyAt(console.log).send();
+  // snub
+  //   .mono('ws:connected-clients')
+  //   .replyAt((clients) => {
+  //     console.log('CLIENTS', clients.length);
+  //     console.log('OFFSET?', countTotal);
+  //   })
+  //   .send();
 }, 30000);
 
 snub.on('ws:connected-clients-offline-mono', async (clients) => {
