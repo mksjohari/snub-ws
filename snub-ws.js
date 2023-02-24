@@ -317,7 +317,6 @@ module.exports = function (config) {
       var keys = [...trackedClients.keys()].filter((k) => {
         return k.startsWith(instanceId);
       });
-      console.log('CHECK!', keys, clientIds);
       keys.forEach((id) => {
         if (!clientIds.includes(id)) trackedClients.delete(id);
       });
