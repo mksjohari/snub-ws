@@ -5,10 +5,13 @@ var cleanUpFns = [];
 process.stdin.resume(); // so the program will not close instantly
 
 function exitHandler(options, exitCode) {
+  console.log('Snub WS SIGINT Cleanup');
   cleanUpFns.forEach((fn) => {
     fn();
   });
-  process.exit();
+  setTimeout((_) => {
+    process.exit();
+  }, 1000);
 }
 
 // do something when app is closing
@@ -37,6 +40,8 @@ module.exports = function (config) {
   config.idleTimeout = Math.max(config.idleTimeout, 1000 * 60 * 5); // min 5 minute on idle timeout
 
   if (config.debug) console.log('Snub-ws Init', config);
+
+  var lastClientListCheck = Date.now();
 
   return function (snub) {
     var socketClients = new Map(); // clients connected to this instance
@@ -97,18 +102,55 @@ module.exports = function (config) {
       return matches;
     };
 
-    var trackedInstances = new Set(); // all known snub-ws instances
-    trackedInstances.add(config.instanceId);
-    snub.on('ws_internal:tracked-instance', (i) => {
-      if (i.online) return trackedInstances.add(i.instanceId);
-      trackedInstances.delete(i.instanceId);
+    // instance tracking
+
+    var trackedInstances = new Map(); // all known snub-ws instances
+    trackedInstances.set(config.instanceId, {
+      instanceId: config.instanceId,
+      lastSeen: Date.now(),
+      online: true,
     });
-    snub
-      .poly('ws_internal:tracked-instance', {
-        instanceId: config.instanceId,
-        online: true,
-      })
-      .send();
+    snub.on('ws_internal:tracked-instance', (i) => {
+      i.lastSeen = Date.now();
+      trackedInstances.set(i.instanceId, i);
+      if (!i.online) deleteInstance(i.instanceId);
+    });
+
+    function deleteInstance(instanceId) {
+      if (config.debug)
+        console.log('Snub-Ws removing tracked instance: ' + instanceId);
+      trackedInstances.delete(instanceId);
+      trackedClients.forEach((clientObj, key) => {
+        var clientInstanceId = clientObj.id.split(':')[0];
+        if (!trackedInstances.has(clientInstanceId)) trackedClients.delete(key);
+        // if (key.startsWith(instanceId)) trackedClients.delete(key);
+      });
+    }
+
+    function broadcastInstance(online = true) {
+      snub
+        .poly('ws_internal:tracked-instance', {
+          instanceId: config.instanceId,
+          online: online,
+        })
+        .send();
+    }
+    var instanceInterval = setInterval((_) => {
+      broadcastInstance();
+      trackedInstances.forEach((instance) => {
+        if (instance.instanceId === config.instance)
+          if (instance.lastSeen < Date.now() - 1000 * 60 * 3)
+            deleteInstance(instance.instanceId);
+      });
+    }, 1000 * 60);
+    broadcastInstance();
+
+    cleanUpFns.push((_) => {
+      broadcastInstance(false);
+      clearInterval(instanceInterval);
+    });
+
+    // Timeout interval
 
     setInterval((_) => {
       if (config.debug)
@@ -177,7 +219,7 @@ module.exports = function (config) {
           Object.assign(ws, {
             id:
               config.instanceId +
-              '_' +
+              ':' +
               ws.key.replace(/[^a-z]/gim, '') +
               '_' +
               snub.generateUID(),
@@ -297,26 +339,16 @@ module.exports = function (config) {
         }
       });
 
-    cleanUpFns.push((_) => {
-      if (config.debug) console.log('Snub WS Cleanup');
-      snub
-        .poly('ws_internal:tracked-client-remove', [...socketClients.keys()])
-        .send();
-      snub
-        .poly('ws_internal:tracked-instance', {
-          instanceId: config.instanceId,
-          online: false,
-        })
-        .send();
-    });
-
     snub.on('ws_internal:tracked-client-upsert', upsertTrackedClients);
 
     snub.on('ws_internal:tracked-client-check', function (instanceObj) {
       var { instanceId, clientIds } = instanceObj;
+
+      // list of ids that are tracked by this instance for the remote instance
       var keys = [...trackedClients.keys()].filter((k) => {
         return k.startsWith(instanceId);
       });
+
       keys.forEach((id) => {
         if (!clientIds.includes(id)) trackedClients.delete(id);
       });
