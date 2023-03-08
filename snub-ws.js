@@ -165,7 +165,7 @@ module.exports = function (config) {
       socketClients.forEach((ws) => {
         // time to idle this connection out
         if (ws.lastMsgTime < Date.now() - config.idleTimeout) {
-          wsKick(ws, 'IDLE_CONNECTION');
+          wsKick(ws, 'IDLE_TIMEOUT');
           return;
         }
 
