@@ -53,7 +53,7 @@ snub.on('ws:my-state', function (event, reply) {
 });
 
 snub.on('ws:command', function (event, reply) {
-  console.log('command', event.payload);
+  console.log('command', event);
   if (event.payload.command === 'set-channels') {
     console.log('setting channels', event.from.id, event.payload.channels);
     snub.poly('ws:set-channel:' + event.from.id, event.payload.channels).send();

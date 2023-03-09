@@ -121,7 +121,7 @@ module.exports = function (config) {
         console.log('Snub-Ws removing tracked instance: ' + instanceId);
       trackedInstances.delete(instanceId);
       trackedClients.forEach((clientObj, key) => {
-        var clientInstanceId = clientObj.id.split(':')[0];
+        var clientInstanceId = clientObj.id.split(';')[0];
         if (!trackedInstances.has(clientInstanceId)) trackedClients.delete(key);
         // if (key.startsWith(instanceId)) trackedClients.delete(key);
       });
@@ -165,7 +165,7 @@ module.exports = function (config) {
       socketClients.forEach((ws) => {
         // time to idle this connection out
         if (ws.lastMsgTime < Date.now() - config.idleTimeout) {
-          wsKick(ws, 'IDLE_TIMEOUT');
+          wsKick(ws, 'IDLE_CONNECTION');
           return;
         }
 
@@ -219,7 +219,7 @@ module.exports = function (config) {
           Object.assign(ws, {
             id:
               config.instanceId +
-              ':' +
+              ';' +
               ws.key.replace(/[^a-z]/gim, '') +
               '_' +
               snub.generateUID(),
