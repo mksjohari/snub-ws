@@ -41,7 +41,7 @@ snub.use(snubws);
 
 ### Auth Config extra
 
-auth can be passed of 3 things
+auth can be passed 1 of 3 things
 
 #### Function
 
@@ -56,6 +56,26 @@ A function passed to auth
   }
 }
 ```
+
+#### Snub event
+
+```javascript
+{
+  auth: 'authenticate-client';
+}
+```
+
+```javascript
+snub.on('ws:authenticate-client', function (auth, reply) {
+  // console.log(auth);
+  if (auth.username == 'username') return reply(true);
+  reply(false);
+});
+```
+
+TODO docs
+
+#### False for no auth
 
 ### Authenticating a client
 
