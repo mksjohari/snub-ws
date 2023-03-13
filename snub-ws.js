@@ -195,9 +195,23 @@ module.exports = function (config) {
         idleTimeout: config.idleTimeout,
         /* Handlers */
         upgrade: (res, req, ctx) => {
+          let basicAuth = false;
+          try {
+            basicAuth = Buffer.from(
+              req.getHeader('authorization').split(' ')[1],
+              'base64'
+            )
+              .toString()
+              .split(':');
+            basicAuth = {
+              username: basicAuth[0],
+              password: basicAuth[1],
+            };
+          } catch (error) {}
           var obj = {
             key: req.getHeader('sec-websocket-key'),
             url: req.getUrl(),
+            basicAuth: basicAuth,
             wsMeta: {
               url: req.getUrl(),
               origin: req.getHeader('origin'),
@@ -248,11 +262,18 @@ module.exports = function (config) {
 
           // socketClients.push(ws);
           socketClients.set(ws.id, ws);
+          if (ws.basicAuth) {
+            wsValidateAuth(ws, ws.basicAuth);
+          }
+          ws.basicAuth = false; // dont keep this arround in mem
 
-          if (config.auth)
+          if (config.auth) {
             setTimeout((_) => {
               if (!ws.authenticated) wsKick(ws, 'AUTH_TIMEOUT');
             }, config.authTimeout);
+          } else {
+            wsValidateAuth(ws, false);
+          }
         },
         message: (ws, message, isBinary) => {
           var [event, payload, reply] = JSON.parse(
@@ -383,11 +404,12 @@ module.exports = function (config) {
         snub.poly('ws_internal:tracked-client-upsert', clientStates).send();
     });
 
-    Object.defineProperty(snub, 'wsConnectedClients', {
-      get: function () {
-        return trackedClients.array();
-      },
-    });
+    if (!snub.wsConnectedClients)
+      Object.defineProperty(snub, 'wsConnectedClients', {
+        get: function () {
+          return trackedClients.array();
+        },
+      });
 
     snub.on('ws:send-all', function (payload) {
       socketClients.authedClients((ws) => {

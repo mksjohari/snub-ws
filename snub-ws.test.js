@@ -1,5 +1,5 @@
 const Snub = require('snub');
-const SnubWS = require('../snub-ws.js');
+const SnubWS = require('./snub-ws.js');
 const WebSocket = require('ws');
 var snub = new Snub({
   host: 'localhost',
@@ -18,43 +18,35 @@ const snubws = new SnubWS({
   debug: true,
   mutliLogin: true,
   idleTimeout: 100,
-  auth:
-    'authenticate-client' ||
-    function (auth, accept, deny) {
-      if (auth.username == 'username') return accept();
-      deny();
-    },
+  auth: function (auth, accept) {
+    if (auth.username === 'username' && auth.password === 'password')
+      return accept(true);
+  },
+});
+
+const snubwsNA = new SnubWS({
+  debug: true,
+  port: 8686,
+  mutliLogin: true,
+  idleTimeout: 100,
+  auth: false,
 });
 
 snub.use(snubws);
+snub.use(snubwsNA);
 
-test('Connect/Disconnect to snub-ws web socket server', async function () {
-  var currentWs = new Ws('ws://username:password@localhost:8585', {
+test('Connect/Disconnect to snub-ws web socket server with basic auth', async function () {
+  let didAuth = false;
+  var socketClient = new Ws('ws://username:password@localhost:8585', {
     autoConnect: true,
-    onopen: (e) => {
-      console.log('SnubSocket Connected');
-      currentWs.json(['_auth', { username: 'username' }]);
-    },
+    onopen: (e) => {},
     onmessage: (e) => {
       try {
         var [key, value] = JSON.parse(e.data);
-        // handle the auth check
-        if (key === '_ping')
-          // && Math.random() > 0.5
-          return currentWs.json(['_pong']);
-        if (key === '_pong') return pingCheck();
         if (key === '_acceptAuth') {
+          didAuth = true;
           console.log('Auth Accepted');
-
-          currentWs.json([
-            'my-state',
-            { username: 'username' },
-            'r' + Date.now(),
-          ]);
-          return;
         }
-
-        console.log('Message', key, value);
       } catch (error) {
         console.error(error);
       }
@@ -66,16 +58,71 @@ test('Connect/Disconnect to snub-ws web socket server', async function () {
     },
     onerror: (e) => console.warn('Error:', e),
   });
+  await justWait(1000);
+  expect(didAuth).toBe(true);
+}, 10000);
 
-  // var awaitReplyNoList = false;
-  // try {
-  //   await snub.mono('test-listener-mono-no-listener', 'junk').awaitReply();
-  // } catch (error) {
-  //   awaitReplyNoList = true;
-  // }
-  // await justWait(250);
-  // expect(awaitReplyNoList).toBe(true);
-  // // expect(checkReplyAwait).toBe(random * 5);
+test('Connect/Disconnect to snub-ws web socket server with socket auth', async function () {
+  let didAuth = false;
+  var socketClient = new Ws('ws://localhost:8585', {
+    autoConnect: true,
+    onopen: (e) => {
+      socketClient.json([
+        '_auth',
+        { username: 'username', password: 'password' },
+      ]);
+    },
+    onmessage: (e) => {
+      try {
+        var [key, value] = JSON.parse(e.data);
+        if (key === '_acceptAuth') {
+          didAuth = true;
+          console.log('Auth Accepted');
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    },
+    onreconnect: (e) => console.log('Reconnecting...', e),
+    onmaximum: (e) => console.log('Stop Attempting!', e),
+    onclose: (e) => {
+      console.log('socket closed');
+    },
+    onerror: (e) => console.warn('Error:', e),
+  });
+  await justWait(1000);
+  expect(didAuth).toBe(true);
+}, 10000);
+
+test('Connect/Disconnect to snub-ws web socket server with no auth', async function () {
+  let didAuth = false;
+  var socketClient = new Ws('ws://localhost:8686', {
+    autoConnect: true,
+    onopen: (e) => {
+      console.log('!!!! WSOPEN');
+    },
+    onmessage: (e) => {
+      try {
+        var [key, value] = JSON.parse(e.data);
+        console.log('!!!!!!!', key, value);
+        if (key === '_acceptAuth') {
+          didAuth = true;
+          console.log('Auth Accepted');
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    },
+    onreconnect: (e) => console.log('Reconnecting...', e),
+    onmaximum: (e) => console.log('Stop Attempting!', e),
+    onclose: (e) => {
+      console.log('socket closed');
+    },
+    onerror: (e) => console.warn('Error:', e),
+  });
+  await justWait(1000);
+  console.log('!!!!!!!', socketClient);
+  expect(didAuth).toBe(true);
 }, 10000);
 
 function Ws(url, opts) {

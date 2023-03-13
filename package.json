@@ -1,10 +1,10 @@
 {
   "name": "snub-ws",
-  "version": "3.0.24",
+  "version": "3.0.25",
   "description": "WebSocket server middleware for snub",
   "main": "snub-ws.js",
   "scripts": {
-    "test": "jest --runInBand --forceExit --detectOpenHandles",
+    "test": "jest --runInBand --forceExit",
     "redis": "docker run --rm --name redis-snub -d -p 6379:6379 redis:4.0-alpine",
     "debug": "npx pm2 del all; npx pm2 start examples/websocket-server.js -i 4 && npx pm2 restart all && npx pm2 logs"
   },

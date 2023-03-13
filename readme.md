@@ -66,9 +66,9 @@ A function passed to auth
 ```
 
 ```javascript
-snub.on('ws:authenticate-client', function (auth, reply) {
+snub.on('ws:authenticate-client', function (auth, accept) {
   // console.log(auth);
-  if (auth.username == 'username') return reply(true);
+  if (auth.username == 'username') return accept(true);
   reply(false);
 });
 ```
