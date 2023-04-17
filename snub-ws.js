@@ -1,4 +1,4 @@
-const uWS = require('uws.js');
+const uWS = require('uWebSockets.js');
 const path = require('path');
 var cleanUpFns = [];
 
@@ -38,6 +38,8 @@ module.exports = function (config) {
     config || {}
   );
   config.idleTimeout = Math.max(config.idleTimeout, 1000 * 60 * 5); // min 5 minute on idle timeout
+
+  config.idleTimeout = Math.min(959000, config.idleTimeout);
 
   if (config.debug) console.log('Snub-ws Init', config);
 
@@ -192,7 +194,7 @@ module.exports = function (config) {
           ? uWS[config.compression]
           : uWS.SHARED_COMPRESSOR,
         maxPayloadLength: 16 * 1024 * 1024,
-        idleTimeout: config.idleTimeout,
+        idleTimeout: config.idleTimeout / 1000,
         /* Handlers */
         upgrade: (res, req, ctx) => {
           let basicAuth = false;
