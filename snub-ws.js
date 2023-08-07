@@ -317,7 +317,9 @@ module.exports = function (config) {
             .mono('ws:' + event, {
               from: ws.state,
               payload,
-              _raw: config.includeRaw ? message : undefined,
+              _raw: config.includeRaw
+                ? Buffer.from(message).toString()
+                : undefined,
               _ts: Date.now(),
             })
             .replyAt(
