@@ -8,6 +8,7 @@ const snubws = new SnubWS({
   debug: true,
   mutliLogin: true,
   idleTimeout: 100,
+  includeRaw: ['ws:my-state'],
   auth:
     'authenticate-client' ||
     function (auth, accept, deny) {
@@ -49,6 +50,7 @@ snub.on('ws:connected-clients-update-mono', (payload) => {
 snub.on('ws:my-state', function (event, reply) {
   // console.log('my-state', event);
   // if the event for the client is expecting a reply we can do so.
+  console.log('!RAW', event._raw);
   reply(event.from);
 });
 

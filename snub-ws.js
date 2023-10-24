@@ -33,6 +33,7 @@ module.exports = function (config) {
       idleTimeout: 1000 * 60 * 60, // disconnect if nothing has come from client in x ms 1 hour default
       instanceId: process.pid + '_' + Date.now(),
       includeRaw: false, // for including raw client messages, debug purposes only.
+      onlineTimeLimit: 1000 * 60 * 60 * 24, //future feature
       error: (_) => {},
     },
     config || {}
@@ -312,14 +313,16 @@ module.exports = function (config) {
             }
             ws.recent.push(Date.now());
           }
-
           snub
             .mono('ws:' + event, {
               from: ws.state,
               payload,
-              _raw: config.includeRaw
-                ? Buffer.from(message).toString()
-                : undefined,
+              _raw:
+                config.includeRaw === true ||
+                (Array.isArray(config.includeRaw) &&
+                  config.includeRaw.includes('ws:' + event))
+                  ? Buffer.from(message).toString()
+                  : undefined,
               _ts: Date.now(),
             })
             .replyAt(
@@ -342,13 +345,8 @@ module.exports = function (config) {
           // console.log('WebSocket back pressure: ' + ws.getBufferedAmount());
         },
         close: async (ws, code, message) => {
-          ws.dead = true;
-          ws.authenticated = false;
-          snub.mono('ws:client-disconnected', ws.state).send();
-          snub.poly('ws_internal:tracked-client-remove', ws.id).send();
-          // wait 15 seconds before cleaning up the socket from the client list
-          await justWait(15000);
-          socketClients.delete(ws.id);
+          ws.closing = true;
+          wsCleanUp(ws);
         },
       })
       .any('/*', (res, req) => {
@@ -629,7 +627,7 @@ module.exports = function (config) {
       }
       if (typeof config.auth === 'function') {
         config.auth(
-          Object.assign({}, authPayload, ws.wsMeta, { id: this.id }),
+          Object.assign({}, authPayload, ws.wsMeta, { id: ws.id }),
           (res) => {
             if (res === true) return wsAcceptAuth(ws, authPayload);
             return wsDenyAuth(ws);
@@ -667,10 +665,25 @@ module.exports = function (config) {
     }
 
     function wsKick(ws, reason = null) {
-      if (ws.dead) return;
       wsSend(ws, '_kickConnection', reason);
-      ws.end(1000, reason);
+      wsCleanUp(ws);
       if (config.debug) console.log('Snub-ws wsKick', reason);
+    }
+
+    function wsCleanUp(ws) {
+      ws.dead = true;
+      ws.authenticated = false;
+      if (!ws.closing) {
+        ws.end(1000, 'CLEANUP');
+      }
+
+      snub.mono('ws:client-disconnected', ws.state).send();
+      snub.poly('ws_internal:tracked-client-remove', ws.id).send();
+
+      // Wait 5 seconds before cleaning up the socket from the client list
+      setTimeout(() => {
+        socketClients.delete(ws.id);
+      }, 5000);
     }
 
     // send msg to client
