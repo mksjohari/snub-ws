@@ -42,6 +42,8 @@ module.exports = function (config) {
 
   config.idleTimeout = Math.min(959000, config.idleTimeout);
 
+  // config.debug = true;
+
   if (config.debug) console.log('Snub-ws Init', config);
 
   var lastClientListCheck = Date.now();
@@ -666,15 +668,15 @@ module.exports = function (config) {
 
     function wsKick(ws, reason = null) {
       wsSend(ws, '_kickConnection', reason);
-      wsCleanUp(ws);
+      wsCleanUp(ws, reason);
       if (config.debug) console.log('Snub-ws wsKick', reason);
     }
 
-    function wsCleanUp(ws) {
+    function wsCleanUp(ws, reason) {
       ws.dead = true;
       ws.authenticated = false;
       if (!ws.closing) {
-        ws.end(1000, 'CLEANUP');
+        ws.end(1000, reason || 'CLEANUP');
       }
 
       snub.mono('ws:client-disconnected', ws.state).send();
