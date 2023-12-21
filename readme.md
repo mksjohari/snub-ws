@@ -186,9 +186,20 @@ snub.poly('ws:send:' + 'username', ['event-name', { payload }]).send();
 snub.poly('ws:send:' + event.from.id, ['event-name', { payload }]).send();
 ```
 
-Send event to multiple users
+Send event to multiple clients
 
 ```javascript
+snub
+  .poly('ws:send-some, [
+    'event-name',
+    ['user1', 'user2', 'user3']
+    { payload },
+  ])
+  .send();
+```
+
+```javascript
+// use this only for a small amount of users.
 snub
   .poly('ws:send:' + ['user1', 'user2', 'user3'].join(','), [
     'event-name',
@@ -199,7 +210,14 @@ snub
 
 ### Channels
 
-// TODO
+```javascript
+snub.poly('ws:add-channel:' + 'username', ['channel1', 'channel2']).send(); // add to existing channels
+snub.poly('ws:set-channel:' + 'username', ['channel1', 'channel2']).send(); // wipes and sets channels
+snub.poly('ws:del-channel:' + 'username', ['channel1', 'channel2']).send(); // removes channels
+
+// send to channel
+snub.poly('ws:send-channel:' + 'channel6', ['event-name', { payload }]).send();
+```
 
 ### Meta
 

@@ -416,26 +416,42 @@ module.exports = function (config) {
       });
 
     snub.on('ws:send-all', function (payload) {
+      var wsArray = [];
       socketClients.authedClients((ws) => {
-        wsSend(ws, ...payload);
+        wsArray.push(ws);
       });
+      wsSend(wsArray, ...payload);
+    });
+
+    snub.on('ws:send-some', function (payload) {
+      var [event, sendTo, ePayload] = payload;
+      if (!Array.isArray(sendTo)) sendTo = [sendTo];
+      var wsArray = [];
+      socketClients.matchFn(sendTo, (ws) => {
+        wsArray.push(ws);
+      });
+      wsSend(wsArray, event, ePayload);
     });
 
     snub.on('ws:send:*', function (payload, n1, channel) {
       var sendTo = channel.split(':').pop().split(',');
       var [event, ePayload] = payload;
+      var wsArray = [];
       socketClients.matchFn(sendTo, (ws) => {
-        wsSend(ws, event, ePayload);
+        wsArray.push(ws);
       });
+      wsSend(wsArray, event, ePayload);
     });
 
     snub.on('ws:send-channel:*', function (payload, n1, channel) {
       var channels = channel.split(':').pop().split(',');
       var [event, ePayload] = payload;
+      var wsArray = [];
       socketClients.array().forEach((ws) => {
         if (channels.some((channel) => ws.state.channels.includes(channel)))
-          wsSend(ws, event, ePayload);
+          wsArray.push(ws);
       });
+      wsSend(ws, event, ePayload);
     });
 
     snub.on('ws:get-clients:*', function (_obj, reply, channel) {
@@ -689,15 +705,19 @@ module.exports = function (config) {
     }
 
     // send msg to client
-    function wsSend(ws, event, payload) {
-      if (ws.dead) return;
+    function wsSend(wsArray, event, payload) {
       var sendString = JSON.stringify([event, payload]);
       const msgHash = hashString(sendString);
-      // block dupe messages going to the client within 5 seconds
-      if (msgHash === ws.lastMsgHash && Date.now() - ws.lastMsgTime < 5000)
-        return;
-      ws.lastMsgHash = msgHash;
-      ws.send(sendString);
+      if (!Array.isArray(wsArray)) wsArray = [wsArray];
+
+      wsArray.forEach((ws) => {
+        if (ws.dead) return;
+        // block dupe messages going to the client within 5 seconds
+        if (msgHash === ws.lastMsgHash && Date.now() - ws.lastMsgTime < 5000)
+          return;
+        ws.lastMsgHash = msgHash;
+        ws.send(sendString);
+      });
     }
   };
 };
