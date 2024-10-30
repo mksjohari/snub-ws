@@ -1,195 +1,90 @@
 const uWS = require('uWebSockets.js');
-const path = require('path');
-var cleanUpFns = [];
 
-process.stdin.resume(); // so the program will not close instantly
+const DEFAULT_CONFIG = {
+  port: 8585,
+  auth: false,
+  debug: false,
+  multiLogin: true, // can the same user be connected more than once
+  authTimeout: 3000,
+  throttle: [50, 5000], // X number of messages per Y milliseconds.
+  idleTimeout: 1000 * 60 * 60, // disconnect if nothing has come from client in x ms 1 hour default
+  instanceId: process.pid,
+  includeRaw: false, // for including raw client messages, debug purposes only.
+  error: (_) => {},
+  internalWsEvents: [],
+};
 
-function exitHandler(options, exitCode) {
-  console.log('Snub WS SIGINT Cleanup');
-  cleanUpFns.forEach((fn) => {
-    fn();
-  });
-  setTimeout((_) => {
-    process.exit();
-  }, 1000);
-}
-
-// do something when app is closing
-process.on('exit', exitHandler.bind(null, { exit: true }));
-process.on('SIGINT', exitHandler.bind(null, { exit: true }));
-process.on('SIGUSR1', exitHandler.bind(null, { exit: true }));
-process.on('SIGUSR2', exitHandler.bind(null, { exit: true }));
-process.on('uncaughtException', exitHandler.bind(null, { exit: true }));
-
+let snub;
 module.exports = function (config) {
-  config = Object.assign(
-    {
-      port: 8585,
-      auth: false,
-      debug: false,
-      multiLogin: true, // can the same user be connected more than once
-      authTimeout: 3000,
-      throttle: [50, 5000], // X number of messages per Y milliseconds.
-      idleTimeout: 1000 * 60 * 60, // disconnect if nothing has come from client in x ms 1 hour default
-      instanceId: process.pid + '_' + Date.now(),
-      includeRaw: false, // for including raw client messages, debug purposes only.
-      onlineTimeLimit: 1000 * 60 * 60 * 24, //future feature
-      error: (_) => {},
-    },
-    config || {}
-  );
+  config = {
+    ...DEFAULT_CONFIG,
+    ...config,
+  };
   config.idleTimeout = Math.max(config.idleTimeout, 1000 * 60 * 5); // min 5 minute on idle timeout
-
   config.idleTimeout = Math.min(959000, config.idleTimeout);
-
-  // config.debug = true;
 
   if (config.debug) console.log('Snub-ws Init', config);
 
-  var lastClientListCheck = Date.now();
+  return function (snubInstance) {
+    snub = snubInstance; // hoist snub instance
+    config.instanceId += '_' + snub.generateUID();
 
-  return function (snub) {
-    var socketClients = new Map(); // clients connected to this instance
-    socketClients.matchFn = function (searches = [], fn = (_) => {}) {
-      var matches = [];
-      searches.forEach((search) => {
-        if (this.has(search)) {
-          fn(this.get(search));
-          matches.push(this.get(search));
-        }
-        this.forEach((socketClient) => {
-          if (socketClient.state.username !== search) return;
-          matches.push(socketClient);
-          fn(socketClient);
-        });
-      });
-      return matches;
-    };
-    socketClients.array = function () {
-      var clients = [];
-      this.forEach((client) => {
-        clients.push(client);
-      });
-      return clients;
-    };
-
-    socketClients.authedClients = function (fn = (_) => {}) {
-      var clients = [];
-      this.forEach((client) => {
-        if (!client.authenticated || client.dead) return;
-        fn(client);
-        clients.push(client);
-      });
-      return clients;
-    };
-
-    var trackedClients = new Map(); // tracked clients connected to all instances
-    trackedClients.array = function () {
-      var clients = [];
-      this.forEach((client) => {
-        clients.push(client);
-      });
-      return clients;
-    };
-    trackedClients.matchFn = function (searches = [], fn = (_) => {}) {
-      var matches = [];
-      searches.forEach((search) => {
-        if (this.has(search)) {
-          fn(this.get(search));
-          matches.push(this.get(search));
-        }
-        this.forEach((trackedClient) => {
-          if (trackedClient.username !== search) return;
-          matches.push(trackedClient);
-          fn(trackedClient);
-        });
-      });
-      return matches;
-    };
-
-    // instance tracking
-
-    var trackedInstances = new Map(); // all known snub-ws instances
-    trackedInstances.set(config.instanceId, {
-      instanceId: config.instanceId,
-      lastSeen: Date.now(),
-      online: true,
+    // create a set of internal events to prevent socket clients from sending them
+    config.internalWsEvents = config.internalWsEvents.map((eventName) => {
+      return eventName.replace(/^ws:/, ''); // ensure no ws: prefix
     });
-    snub.on('ws_internal:tracked-instance', (i) => {
-      i.lastSeen = Date.now();
-      trackedInstances.set(i.instanceId, i);
-      if (!i.online) deleteInstance(i.instanceId);
-    });
-
-    function deleteInstance(instanceId) {
-      if (config.debug)
-        console.log('Snub-Ws removing tracked instance: ' + instanceId);
-      trackedInstances.delete(instanceId);
-      trackedClients.forEach((clientObj, key) => {
-        var clientInstanceId = clientObj.id.split(';')[0];
-        if (!trackedInstances.has(clientInstanceId)) trackedClients.delete(key);
-        // if (key.startsWith(instanceId)) trackedClients.delete(key);
+    config.internalWsEvents = new Set(config.internalWsEvents);
+    function registerWsSnubEvent(eventName, handler) {
+      config.internalWsEvents.add(eventName.split(':')[0]);
+      snub.on('ws:' + eventName, (payload, reply, channel) => {
+        if (eventName.includes(':*'))
+          channel = channel.split(':').at(-1).split(',');
+        handler(payload, reply, channel);
       });
     }
 
-    function broadcastInstance(online = true) {
-      snub
-        .poly('ws_internal:tracked-instance', {
-          instanceId: config.instanceId,
-          online: online,
-        })
-        .send();
-    }
-    var instanceInterval = setInterval((_) => {
-      broadcastInstance();
-      trackedInstances.forEach((instance) => {
-        if (instance.instanceId === config.instance)
-          if (instance.lastSeen < Date.now() - 1000 * 60 * 3)
-            deleteInstance(instance.instanceId);
-      });
-    }, 1000 * 60);
-    broadcastInstance();
+    // New stuff
+    const wsClients = new WsClients(config);
 
-    cleanUpFns.push((_) => {
-      broadcastInstance(false);
-      clearInterval(instanceInterval);
-    });
+    // ten second interval to keep instance alive
+    instanceAlive();
+    setInterval(() => {
+      instanceAlive();
 
-    // Timeout interval
-
-    setInterval((_) => {
-      if (config.debug)
-        console.log(
-          `Snub-Ws Interval \n` +
-            `IID: ${config.instanceId}\n` +
-            `Local CLients: ${socketClients.size}\n` +
-            `Tracked CLients: ${trackedClients.size}\n\n`
-        );
-
-      var localConnectedIdList = [];
-      socketClients.forEach((ws) => {
-        // time to idle this connection out
-        if (ws.lastMsgTime < Date.now() - config.idleTimeout) {
-          wsKick(ws, 'IDLE_TIMEOUT');
-          return;
-        }
-
+      wsClients.clients().forEach((client) => {
         // send ping to connection that will soon idle out
-        if (ws.lastMsgTime < Date.now() - (config.idleTimeout - 1000 * 60)) {
-          wsSend(ws, '_ping', Date.now());
+        const idleOutTime = client.state.lastMsgTime + config.idleTimeout;
+        if (idleOutTime < Date.now() + 1000 * 30)
+          client.send('_ping', Date.now());
+
+        // time to idle this connection out
+        if (idleOutTime < Date.now()) {
+          client.kick('IDLE_TIMEOUT', 1000);
         }
-        localConnectedIdList.push(ws.id);
       });
 
-      snub
-        .poly('ws_internal:tracked-client-check', {
-          instanceId: config.instanceId,
-          clientIds: localConnectedIdList,
-        })
-        .send();
-    }, config.idleTimeout / 4);
+    }, 1000 * 10);
 
-    uWS
+    function instanceAlive() {
+      snub.redis.zadd(
+        '_snubws_instance',
+        Date.now() + 30 * 1000,
+        config.instanceId
+      );
+    }
+
+    async function aliveInstances() {
+      const now = Date.now();
+      const instances = await snub.redis.zrangebyscore(
+        '_snubws_instance',
+        now,
+        '+inf'
+      );
+      snub.redis.zremrangebyscore('_snubws_instance', '-inf', now);
+      return instances;
+    }
+
+    const socketServer = uWS
       .App()
       .ws('/*', {
         /* Options */
@@ -235,120 +130,17 @@ module.exports = function (config) {
           );
         },
         open: (ws) => {
-          Object.assign(ws, {
-            id:
-              config.instanceId +
-              ';' +
-              ws.key.replace(/[^a-z]/gim, '') +
-              '_' +
-              snub.generateUID(),
-            auth: {},
-            channels: [],
-            dead: false,
-            authenticated: false,
-            connectTime: Date.now(),
-            recent: [],
-            lastMsgTime: Date.now(),
-            metaObj: {},
-          });
-          Object.defineProperty(ws, 'state', {
-            get: function () {
-              return {
-                id: ws.id,
-                username: ws.auth.username,
-                channels: ws.channels,
-                authenticated: ws.authenticated,
-                connectTime: ws.connectTime,
-                remoteAddress: ws.wsMeta.remoteAddress,
-                meta: ws.metaObj,
-              };
-            },
-          });
-
-          // socketClients.push(ws);
-          socketClients.set(ws.id, ws);
-          if (ws.basicAuth) {
-            wsValidateAuth(ws, ws.basicAuth);
-          }
-          ws.basicAuth = false; // dont keep this arround in mem
-
-          if (config.auth) {
-            setTimeout((_) => {
-              if (!ws.authenticated) wsKick(ws, 'AUTH_TIMEOUT');
-            }, config.authTimeout);
-          } else {
-            wsValidateAuth(ws, false);
-          }
+          return (ws.wsClient = wsClients.createClient(ws, config));
         },
         message: (ws, message, isBinary) => {
-          var [event, payload, reply] = JSON.parse(
-            Buffer.from(message).toString()
-          );
-          if (
-            [
-              'send-all',
-              'kick-all',
-              'connected-clients',
-              'client-authenticated',
-              'client-failedauth',
-            ].includes(event)
-          )
-            return false;
-          if (
-            event.match(
-              /^(send|kick|send-channel|set-meta|add-channel|set-channel|del-channel|get-clients):/
-            )
-          )
-            return false;
-
-          ws.lastMsgTime = Date.now();
-          if (event === '_auth') return wsValidateAuth(ws, payload);
-          if (event === '_ping') return wsSend(ws, '_pong', payload);
-          if (event === '_pong') return;
-
-          if (config.throttle) {
-            ws.recent = ws.recent.filter(
-              (ts) => ts > Date.now() - config.throttle[1]
-            );
-            if (ws.recent.length > config.throttle[0]) {
-              wsKick(ws, 'THROTTLE_LIMIT');
-            }
-            ws.recent.push(Date.now());
-          }
-          snub
-            .mono('ws:' + event, {
-              from: ws.state,
-              payload,
-              _raw:
-                config.includeRaw === true ||
-                (Array.isArray(config.includeRaw) &&
-                  config.includeRaw.includes('ws:' + event))
-                  ? Buffer.from(message).toString()
-                  : undefined,
-              _ts: Date.now(),
-            })
-            .replyAt(
-              reply
-                ? (data) => {
-                    wsSend(ws, reply, data);
-                  }
-                : undefined
-            )
-            .send((c) => {
-              if (c < 1 && reply) {
-                wsSend(ws, reply + ':error', {
-                  error: 'Nothing was listening to this event',
-                });
-              }
-            });
+          return ws.wsClient.onMessage(message);
         },
         drain: (ws) => {
           // need to work out if this is useful for anything.
           // console.log('WebSocket back pressure: ' + ws.getBufferedAmount());
         },
         close: async (ws, code, message) => {
-          ws.closing = true;
-          wsCleanUp(ws);
+          return ws.wsClient.onClose(code, message);
         },
       })
       .any('/*', (res, req) => {
@@ -356,7 +148,9 @@ module.exports = function (config) {
       })
       .listen(config.port, (token) => {
         if (token) {
-          console.log('Snub WS server listening on port ' + config.port);
+          console.log(
+            `Snub WS server listening ${config.instanceId} on port ${config.port}, MultiLogin: ${config.multiLogin}`
+          );
         } else {
           console.error(
             'Snub WS server FAILED listening on port ' + config.port
@@ -364,361 +158,130 @@ module.exports = function (config) {
         }
       });
 
-    snub.on('ws_internal:tracked-client-upsert', upsertTrackedClients);
-
-    snub.on('ws_internal:tracked-client-check', function (instanceObj) {
-      var { instanceId, clientIds } = instanceObj;
-
-      // list of ids that are tracked by this instance for the remote instance
-      var keys = [...trackedClients.keys()].filter((k) => {
-        return k.startsWith(instanceId);
-      });
-
-      keys.forEach((id) => {
-        if (!clientIds.includes(id)) trackedClients.delete(id);
-      });
+    registerWsSnubEvent('send-all', (ipayload) => {
+      const [event, payload, idsOrUsernames] = ipayload;
+      const clients = wsClients.clients(idsOrUsernames);
+      clients.send(event, payload);
     });
 
-    snub.on('ws_internal:tracked-client-remove', function (clientIds) {
-      if (!Array.isArray(clientIds)) clientIds = [clientIds];
-      if (config.debug)
-        console.log('Snub-ws remove tracked clients', clientIds);
-      var clients = [];
-      clientIds.forEach((clientId) => {
-        if (socketClients.has(clientId))
-          clients.push(
-            JSON.parse(JSON.stringify(socketClients.get(clientId).state))
-          );
-        trackedClients.delete(clientId);
-      });
-      if (clients.length) {
-        snub.poly('ws:connected-clients-offline', clients).send();
-        snub.mono('ws:connected-clients-offline-mono', clients).send();
+    registerWsSnubEvent('send:*', (ipayload, reply, idsOrUsernames) => {
+      const [event, payload] = ipayload;
+      const clients = wsClients.clients(idsOrUsernames);
+      clients.send(event, payload);
+    });
+
+    registerWsSnubEvent('send-channel:*', (ipayload, reply, idsOrUsernames) => {
+      const [event, payload] = ipayload;
+      const clients = wsClients.channelClients(idsOrUsernames);
+      clients.send(event, payload);
+    });
+
+    registerWsSnubEvent('send-channel', (ipayload) => {
+      const [event, payload, idsOrUsernames] = ipayload;
+      const clients = wsClients.channelClients(idsOrUsernames);
+      clients.send(event, payload);
+    });
+
+    registerWsSnubEvent('set-meta:*', (metaObj, reply, idsOrUsernames) => {
+      const clients = wsClients.clients(idsOrUsernames);
+      clients.setMeta(metaObj);
+      reply(clients.states);
+    });
+
+    registerWsSnubEvent('set-meta', (payload, reply) => {
+      const [metaObj, idsOrUsernames] = payload;
+      const clients = wsClients.clients(idsOrUsernames);
+      clients.setMeta(metaObj);
+      reply(clients.states);
+    });
+
+    registerWsSnubEvent(
+      'add-channel:*',
+      (arrayOfChannels, reply, idsOrUsernames) => {
+        const clients = wsClients.clients(idsOrUsernames);
+        clients.addChannel(arrayOfChannels);
       }
+    );
+
+    registerWsSnubEvent(
+      'del-channel:*',
+      (arrayOfChannels, reply, idsOrUsernames) => {
+        const clients = wsClients.clients(idsOrUsernames);
+        clients.delChannel(arrayOfChannels);
+      }
+    );
+
+    registerWsSnubEvent('kick-all', (message, reply, idsOrUsernames) => {
+      const clients = wsClients.clients(idsOrUsernames);
+      clients.kick(message);
     });
 
-    // on launch get list of tracked clients from other instances
-    snub.poly('ws_internal:tracked-client-fetch').send();
-
-    snub.on('ws_internal:tracked-client-fetch', (_) => {
-      var clientStates = socketClients
-        .authedClients()
-        .map((client) => client.state);
-      if (clientStates.length)
-        snub.poly('ws_internal:tracked-client-upsert', clientStates).send();
+    registerWsSnubEvent('kick', (payload, reply) => {
+      const [idsOrUsernames, reason, code] = payload;
+      const clients = wsClients.clients(idsOrUsernames);
+      clients.kick(reason, code);
     });
 
-    if (!snub.wsConnectedClients)
-      Object.defineProperty(snub, 'wsConnectedClients', {
-        get: function () {
-          return trackedClients.array();
-        },
+    registerWsSnubEvent('kick:*', (payload, reply, idsOrUsernames) => {
+      const clients = wsClients.clients(idsOrUsernames);
+      clients.kick(payload.message);
+    });
+
+    async function getAllConnectedClientStates(idsOrUsernames) {
+      var instances = await aliveInstances();
+      const instancesClients = await snub
+        .poly('ws_internal:connected-clients', idsOrUsernames)
+        .awaitReply(1000, instances.length);
+      const clients = [];
+      instancesClients.forEach((instance) => {
+        clients.push(...instance[1]);
       });
+      return clients;
+    }
 
-    snub.on('ws:send-all', function (payload) {
-      var wsArray = [];
-      socketClients.authedClients((ws) => {
-        wsArray.push(ws);
-      });
-      wsSend(wsArray, ...payload);
+    registerWsSnubEvent('get-clients:*', async (_, reply, idsOrUsernames) => {
+      reply(await getAllConnectedClientStates(idsOrUsernames));
     });
 
-    snub.on('ws:send-some', function (payload) {
-      var [event, sendTo, ePayload] = payload;
-      if (!Array.isArray(sendTo)) sendTo = [sendTo];
-      var wsArray = [];
-      socketClients.matchFn(sendTo, (ws) => {
-        wsArray.push(ws);
-      });
-      wsSend(wsArray, event, ePayload);
+    registerWsSnubEvent('get-clients', async (idsOrUsernames, reply) => {
+      reply(await getAllConnectedClientStates(idsOrUsernames));
     });
 
-    snub.on('ws:send:*', function (payload, n1, channel) {
-      var sendTo = channel.split(':').pop().split(',');
-      var [event, ePayload] = payload;
-      var wsArray = [];
-      socketClients.matchFn(sendTo, (ws) => {
-        wsArray.push(ws);
-      });
-      wsSend(wsArray, event, ePayload);
+    registerWsSnubEvent('connected-clients', async (idsOrUsernames, reply) => {
+      reply(await getAllConnectedClientStates(idsOrUsernames));
     });
 
-    snub.on('ws:send-channel:*', function (payload, n1, channel) {
-      var channels = channel.split(':').pop().split(',');
-      var [event, ePayload] = payload;
-      var wsArray = [];
-      socketClients.array().forEach((ws) => {
-        if (channels.some((channel) => ws.state.channels.includes(channel)))
-          wsArray.push(ws);
+    registerWsSnubEvent('channel-clients', async (channels, reply) => {
+      var instances = await aliveInstances();
+      const instancesClients = await snub
+        .poly('ws_internal:channel-clients', channels)
+        .awaitReply(1000, instances.length);
+      const clients = [];
+      instancesClients.forEach((instance) => {
+        clients.push(...instance[1]);
       });
-      wsSend(ws, event, ePayload);
+      reply(clients);
     });
 
-    snub.on('ws:get-clients:*', function (_obj, reply, channel) {
-      var idsOrUsername = channel.split(':').pop().split(',');
-      var clientStates = [];
-      trackedClients.matchFn(idsOrUsername, (client) => {
-        clientStates.push(client);
-      });
-      reply(clientStates);
-    });
-
-    snub.on('ws:set-meta:*', function (metaObj, reply, channel) {
-      Object.keys(metaObj).forEach((k) => {
-        if (Array.isArray(metaObj[k])) {
-          return (metaObj[k] = metaObj[k]
-            .filter((i) => {
-              return (
-                ['number', 'string'].includes(typeof i) && String(i).length < 64
-              );
-            })
-            .slice(0, 64));
-        }
-        if (
-          ['number', 'string'].includes(typeof metaObj[k]) &&
-          String(metaObj[k]).length > 128
-        ) {
-          return delete metaObj[k];
-        }
-        if (typeof metaObj[k] === 'object') {
-          return delete metaObj[k];
+    snub.on('ws_internal:dedupe-client-check', async (state) => {
+      if (config.multiLogin) return;
+      const clients = wsClients.clients(state.username);
+      clients.forEach((client) => {
+        if (client.state.id !== state.id && client.state.connectTime <= state.connectTime) {
+          if(client.state.connectTime === state.connectTime)
+            if(client.state.id > state.id) return;
+          client.kick('DUPE_LOGIN', 3000);
         }
       });
-      var idsOrUsername = channel.split(':').pop().split(',');
-
-      var clientStates = [];
-      socketClients.matchFn(idsOrUsername, (ws) => {
-        var pre = JSON.stringify(ws.metaObj);
-        Object.assign(ws.metaObj, metaObj);
-        if (pre !== JSON.stringify(ws.metaObj)) clientStates.push(ws.state);
-      });
-      if (clientStates.length)
-        snub.poly('ws_internal:tracked-client-upsert', clientStates).send();
-      if (clientStates.length > 0 && reply) {
-        reply(clientStates);
-      }
     });
 
-    // add, set and delete channels for a client, accepts id or username
-    snub.on('ws:add-channel:*', function (arrayOfChannels, reply, channel) {
-      if (typeof arrayOfChannels === 'string')
-        arrayOfChannels = [arrayOfChannels];
-
-      var idsOrUsername = channel.split(':').pop().split(',');
-      var clientStates = [];
-      socketClients.matchFn(idsOrUsername, (ws) => {
-        var pre = JSON.stringify(ws.channels);
-        ws.channels = [...new Set([].concat(ws.channels, arrayOfChannels))];
-        if (pre !== JSON.stringify(ws.channels)) clientStates.push(ws.state);
-      });
-      if (clientStates.length)
-        snub.poly('ws_internal:tracked-client-upsert', clientStates).send();
-      if (clientStates.length > 0 && reply) {
-        reply(clientStates);
-      }
+    snub.on('ws_internal:connected-clients', function (idsOrUsernames, reply) {
+      reply([config.instanceId, wsClients.clients(idsOrUsernames).states]);
     });
 
-    snub.on('ws:set-channel:*', function (arrayOfChannels, reply, channel) {
-      if (typeof arrayOfChannels === 'string')
-        arrayOfChannels = [arrayOfChannels];
-
-      var idsOrUsername = channel.split(':').pop().split(',');
-      var clientStates = [];
-      socketClients.matchFn(idsOrUsername, (ws) => {
-        var pre = JSON.stringify(ws.channels);
-        ws.channels = [...new Set(arrayOfChannels)];
-        if (pre !== JSON.stringify(ws.channels)) clientStates.push(ws.state);
-      });
-      if (clientStates.length)
-        snub.poly('ws_internal:tracked-client-upsert', clientStates).send();
-      if (clientStates.length > 0 && reply) {
-        reply(clientStates);
-      }
+    snub.on('ws_internal:channel-clients', function (channels, reply) {
+      reply([config.instanceId, wsClients.channelClients(channels).states]);
     });
-
-    snub.on('ws:del-channel:*', function (arrayOfChannels, reply, channel) {
-      if (typeof arrayOfChannels === 'string')
-        arrayOfChannels = [arrayOfChannels];
-
-      var idsOrUsername = channel.split(':').pop().split(',');
-      var clientStates = [];
-      socketClients.matchFn(idsOrUsername, (ws) => {
-        var pre = JSON.stringify(ws.channels);
-        ws.channels = [
-          ...new Set(
-            ws.channels.filter((c) => {
-              return !arrayOfChannels.includes(c);
-            })
-          ),
-        ];
-        if (pre !== JSON.stringify(ws.channels)) clientStates.push(ws.state);
-      });
-      if (clientStates.length)
-        snub.poly('ws_internal:tracked-client-upsert', clientStates).send();
-      if (clientStates.length > 0 && reply) {
-        reply(clientStates);
-      }
-    });
-
-    snub.on('ws:kick:*', function (message, n2, channel) {
-      var sendTo = channel.split(':').pop().split(',');
-      socketClients.matchFn(sendTo, (ws) => {
-        wsKick(ws, message);
-        ws.authenticated = false;
-      });
-    });
-    snub.on('ws:kick-all', function (message = 'kick') {
-      socketClients.array().forEach((ws) => {
-        wsKick(ws, message);
-        ws.authenticated = false;
-      });
-    });
-
-    snub.on('ws_internal:client-authenticated', function (wsState) {
-      if (config.multiLogin === false) {
-        socketClients.matchFn([wsState.id, wsState.username], (ws) => {
-          if (ws.connectTime < wsState.connectTime)
-            return wsKick(ws, 'DUPE_LOGIN');
-        });
-      }
-    });
-
-    snub.on('ws:connected-clients', function (clientIds, reply) {
-      if (!clientIds) return reply(snub.wsConnectedClients);
-      reply(
-        snub.wsConnectedClients.filter(
-          (c) => clientIds.includes(c.id) || clientIds.includes(c.username)
-        )
-      );
-    });
-
-    snub.on('ws:tracked-client-stat', (_data, reply) => {
-      reply({
-        snubInstanceId: config.instanceId,
-        localClientCount: socketClients.size,
-        trackedClientCount: trackedClients.size,
-      });
-    });
-
-    function upsertTrackedClients(clients) {
-      if (!Array.isArray(clients)) clients = [clients];
-      if (config.debug) console.log('Snub-ws tracked clients upsert', clients);
-      var clientsToUpdate = [];
-      clients.forEach((clientObj) => {
-        if (!clientObj.authenticated) return;
-        var newObj = Object.assign(
-          trackedClients.get(clientObj.id) || {},
-          clientObj
-        );
-        trackedClients.set(clientObj.id, newObj);
-        if (socketClients.has(clientObj.id)) clientsToUpdate.push(newObj);
-      });
-      if (clientsToUpdate.length) {
-        snub.poly('ws:connected-clients-update', clientsToUpdate).send();
-        snub.mono('ws:connected-clients-update-mono', clientsToUpdate).send();
-      }
-    }
-
-    function wsValidateAuth(ws, authPayload) {
-      if (config.debug) console.log('Snub-ws wsAcceptAuth', authPayload);
-      if (config.auth === false) {
-        return wsAcceptAuth(ws, authPayload);
-      }
-
-      if (typeof config.auth === 'string') {
-        snub
-          .mono(
-            'ws:' + config.auth,
-            Object.assign({}, authPayload, ws.wsMeta, { id: ws.id })
-          )
-          .replyAt((payload) => {
-            if (payload === true) {
-              return wsAcceptAuth(ws, authPayload);
-            }
-            wsDenyAuth(ws);
-          })
-          .send((received) => {
-            if (!received) {
-              wsDenyAuth(ws);
-            }
-          });
-      }
-      if (typeof config.auth === 'function') {
-        config.auth(
-          Object.assign({}, authPayload, ws.wsMeta, { id: ws.id }),
-          (res) => {
-            if (res === true) return wsAcceptAuth(ws, authPayload);
-            return wsDenyAuth(ws);
-          }
-        );
-      }
-    }
-
-    function wsAcceptAuth(ws, authPayload) {
-      ws.authenticated = true;
-      ws.auth = authPayload;
-      snub.mono('ws:client-authenticated', ws.state).send();
-      snub.poly('ws_internal:client-authenticated', ws.state).send();
-      if (config.debug)
-        console.log('Snub WS Client Authenticated => ' + ws.state.id);
-
-      // we want to add a delay here to allow a small window of time to kick dupe users
-      setTimeout(
-        (_) => {
-          if (ws.state.authenticated) {
-            wsSend(ws, '_acceptAuth', ws.state.id);
-          }
-        },
-        config.multiLogin ? 0 : 200
-      );
-      snub.poly('ws_internal:tracked-client-upsert', ws.state).send();
-
-      if (config.debug) console.log('Snub-ws wsAcceptAuth', ws);
-    }
-    function wsDenyAuth(ws) {
-      ws.authenticated = false;
-      wsKick(ws, 'AUTH_FAIL');
-      snub.mono('ws:client-failedauth', ws.state).send();
-      if (config.debug) console.log('Snub-ws wsDenyAuth');
-    }
-
-    function wsKick(ws, reason = null) {
-      wsSend(ws, '_kickConnection', reason);
-      wsCleanUp(ws, reason);
-      if (config.debug) console.log('Snub-ws wsKick', reason);
-    }
-
-    function wsCleanUp(ws, reason) {
-      ws.dead = true;
-      ws.authenticated = false;
-      if (!ws.closing) {
-        ws.end(1000, reason || 'CLEANUP');
-      }
-
-      snub.mono('ws:client-disconnected', ws.state).send();
-      snub.poly('ws_internal:tracked-client-remove', ws.id).send();
-
-      // Wait 5 seconds before cleaning up the socket from the client list
-      setTimeout(() => {
-        socketClients.delete(ws.id);
-      }, 5000);
-    }
-
-    // send msg to client
-    function wsSend(wsArray, event, payload) {
-      var sendString = JSON.stringify([event, payload]);
-      const msgHash = hashString(sendString);
-      if (!Array.isArray(wsArray)) wsArray = [wsArray];
-
-      wsArray.forEach((ws) => {
-        if (ws.dead) return;
-        // block dupe messages going to the client within 5 seconds
-        if (msgHash === ws.lastMsgHash && Date.now() - ws.lastMsgTime < 5000)
-          return;
-        ws.lastMsgHash = msgHash;
-        ws.send(sendString);
-      });
-    }
   };
 };
 
@@ -740,3 +303,317 @@ function justWait(ms = 1000) {
     setTimeout(resolve, ms);
   });
 }
+
+class ClientMap extends Map {
+  get states() {
+    return Array.from(this.values()).map((client) => client.state);
+  }
+
+  send(event, payload) {
+    this.forEach((ws) => {
+      ws.send(event, payload);
+    });
+  }
+  setMeta(metaObj) {
+    this.forEach((ws) => {
+      ws.setMeta(metaObj);
+    });
+  }
+  addChannel(arrayOfChannels) {
+    this.forEach((ws) => {
+      ws.addChannel(arrayOfChannels);
+    });
+  }
+  delChannel(arrayOfChannels) {
+    this.forEach((ws) => {
+      ws.delChannel(arrayOfChannels);
+    });
+  }
+  kick(reason) {
+    this.forEach((ws) => {
+      ws.kick(reason);
+    });
+  }
+}
+
+class WsClients {
+  #config;
+  #clients;
+
+  constructor(config) {
+    this.#config = config;
+    this.#clients = new Map();
+  }
+
+  clients(idsOrUsernames) {
+    idsOrUsernames = normalizeStringArray(idsOrUsernames);
+    const clientMap = new ClientMap();
+    this.#clients.forEach((client) => {
+      if (
+        idsOrUsernames === undefined ||
+        idsOrUsernames.includes(client.state.id) ||
+        idsOrUsernames.includes(client.state.username)
+      )
+        clientMap.set(client.state.id, client);
+    });
+    return clientMap;
+  }
+
+  channelClients(channels) {
+    channels = normalizeStringArray(channels);
+    const clientMap = new ClientMap();
+    this.#clients.forEach((client) => {
+      if (channels.some((channel) => client.state.channels.includes(channel)))
+        clientMap.set(client.state.id, client);
+    });
+    return clientMap;
+  }
+
+  createClient(ws) {
+    const client = new WsClient(ws, this.#config, this.#clients);
+    return client;
+  }
+}
+
+class WsClient {
+  #ws;
+  #config;
+  #clients;
+  #internal = {
+    id: null,
+    connectTime: Date.now(),
+    lastMsgTime: Date.now(),
+    channels: new Set(),
+    metaObj: {},
+    auth: {},
+    authenticated: false,
+    dead: false,
+    recent: [],
+    closing: false,
+    wsMeta: {},
+  };
+
+  constructor(ws, config, clients) {
+    this.#ws = ws;
+    this.#config = config;
+    this.#clients = clients;
+
+    this.#internal.id =
+      config.instanceId +
+      ';' +
+      ws.key.replace(/[^a-z]/gim, '') +
+      '_' +
+      snub.generateUID();
+    clients.set(this.#internal.id, this);
+
+    this.#internal.wsMeta = ws.wsMeta;
+
+    if (ws.basicAuth) {
+      this.#validateAuth(ws.basicAuth);
+      ws.basicAuth = false;
+    }
+
+    if (config.auth === false) {
+      this.#validateAuth(false);
+    }
+  }
+
+  get state() {
+    return {
+      id: this.#internal.id,
+      username: this.#internal.auth.username,
+      channels: [...this.#internal.channels],
+      authenticated: this.#internal.authenticated,
+      connectTime: this.#internal.connectTime,
+      remoteAddress: this.#internal.wsMeta.remoteAddress,
+      lastMsgTime: this.#internal.lastMsgTime,
+      meta: this.#internal.metaObj,
+    };
+  }
+
+  onMessage(message) {
+    const stringMessage = Buffer.from(message).toString();
+    const [event, payload, reply] = JSON.parse(stringMessage);
+
+    this.#internal.lastMsgTime = Date.now();
+
+    if (this.#config.internalWsEvents.has(event)) return; // block internal events
+
+    if (event === '_auth') return this.#validateAuth(payload);
+    if (event === '_ping') return this.send('_pong', payload);
+    if (event === '_pong') return;
+
+    //@todo prevent client from sending internal events
+
+    if (this.#config.throttle) {
+      this.#internal.recent = this.#internal.recent.filter(
+        (ts) => ts > Date.now() - this.#config.throttle[1]
+      );
+      if (this.#internal.recent.length > this.#config.throttle[0]) {
+        return this.kick('THROTTLE_LIMIT');
+      }
+      this.#internal.recent.push(Date.now());
+    }
+
+    const includeRaw =
+      this.#config.includeRaw === true ||
+      (Array.isArray(this.#config.includeRaw) &&
+        this.#config.includeRaw.includes(event));
+
+    snub
+      .mono('ws:' + event, {
+        from: this.state,
+        payload,
+        _raw: includeRaw ? stringMessage : undefined,
+        _ts: Date.now(),
+      })
+      .replyAt(
+        reply
+          ? (data) => {
+              this.send(reply, data);
+            }
+          : undefined
+      )
+      .send((c) => {
+        if (c < 1 && reply) {
+          this.send(reply + ':error', {
+            error: 'Nothing was listening to this event',
+          });
+        }
+      });
+  }
+
+  onClose(code, message) {
+    message = Buffer.from(message).toString();
+    this.#clients.delete(this.#internal.id);
+  }
+
+  send(event, payload) {
+    const sendString = JSON.stringify([event, payload]);
+    const msgHash = hashString(sendString);
+
+    // dont send the same message twice in a row within 3 seconds
+    if (
+      msgHash === this.#internal.lastMsgHash &&
+      Date.now() - this.#internal.lastMsgTime < 3000
+    ) {
+      return;
+    }
+
+    this.#internal.lastMsgHash = msgHash;
+    this.#ws.send(sendString);
+  }
+
+  setMeta(metaObj) {
+    // metaObj should be an object with string number bool array values only
+    // array values should be strings or numbers only
+    // strings should be less than 128 characters
+    // numbers should be less than 128 characters
+    // arrays should be less than 64 items
+    // everything else will be dropped with no warning.
+
+    metaObj = { ...this.#internal.metaObj, ...metaObj };
+    const newMeta = {};
+    Object.keys(metaObj).forEach((k) => {
+      const value = metaObj[k];
+
+      if (Array.isArray(value)) {
+        // Handle array values
+        newMeta[k] = value
+          .filter(
+            (i) =>
+              ['number', 'string', 'boolean'].includes(typeof i) &&
+              String(i).length < 64
+          )
+          .slice(0, 64);
+      } else if (
+        ['number', 'string', 'boolean'].includes(typeof value) &&
+        (typeof value === 'boolean' || String(value).length <= 128)
+      ) {
+        // Handle strings, numbers, or booleans (with length check for strings/numbers)
+        newMeta[k] = value;
+      }
+    });
+    this.#internal.metaObj = newMeta;
+  }
+
+  addChannel(arrayOfChannels) {
+    if (typeof arrayOfChannels === 'string')
+      arrayOfChannels = [arrayOfChannels];
+    this.#internal.channels = new Set([
+      ...this.#internal.channels,
+      ...arrayOfChannels,
+    ]);
+  }
+
+  delChannel(arrayOfChannels) {
+    if (typeof arrayOfChannels === 'string')
+      arrayOfChannels = [arrayOfChannels];
+    arrayOfChannels.forEach((channel) => {
+      this.#internal.channels.delete(channel);
+    });
+  }
+
+  kick(reason, code = 1000) {
+    this.send('_kickConnection', reason);
+    setTimeout((_) => {
+      this.#ws.end(code, 'Client Kicked: ' + reason);
+    }, 100);
+  }
+
+  #validateAuth(authPayload) {
+    if (this.#config.auth === false) return this.#acceptAuth(authPayload);
+
+    const authObj = { ...this.state, ...authPayload };
+    if (typeof this.#config.auth === 'string') {
+      snub
+        .mono('ws:' + this.#config.auth, authObj)
+        .replyAt((validAuth) => {
+          if (validAuth === true) return this.#acceptAuth(authPayload);
+          this.#denyAuth();
+        })
+        .send((received) => {
+          if (!received) {
+            this.#denyAuth();
+          }
+        });
+    }
+
+    if (typeof this.#config.auth === 'function') {
+      this.#config.auth(authObj, (res) => {
+        if (res === true) return this.#acceptAuth(authPayload);
+        return this.#denyAuth();
+      });
+    }
+  }
+
+  #acceptAuth(authPayload) {
+    this.#internal.authenticated = true;
+    this.#internal.auth = authPayload;
+    if (!this.#config.multiLogin && this.state.username)
+      snub.poly('ws_internal:dedupe-client-check', this.state).send();
+    snub.mono('ws:client-authenticated', this.state).send();
+
+    setTimeout(
+      () => {
+        if (this.state.authenticated) {
+          this.send('_acceptAuth', this.state.id);
+        }
+      },
+      this.#config.multiLogin ? 0 : 100
+    );
+  }
+
+  #denyAuth() {
+    this.#internal.authenticated = false;
+    this.kick('AUTH_FAIL', 3000);
+    snub.mono('ws:client-failedauth', this.state).send();
+  }
+}
+
+normalizeStringArray = (strOrArray) => {
+  if (!strOrArray) return strOrArray;
+  if (typeof strOrArray === 'string') return [strOrArray];
+  if (Array.isArray(strOrArray)) return strOrArray;
+  throw new Error('Invalid input: expected string or array of strings');
+};
