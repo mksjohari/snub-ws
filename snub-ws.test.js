@@ -15,7 +15,9 @@ var snub = new Snub({
 });
 
 function auth(auth, accept) {
-  if (auth.username && auth.password === 'password') return accept(true);
+  if (auth.username && auth.password === 'password') return accept({
+    token: '123456',
+  });
   return accept(false);
 }
 
@@ -147,6 +149,7 @@ test('Bulk connections', async function () {
   let didAuth = 0;
   let sendAll = 0;
   let blockCheck = 0;
+  let tokenCheck = '';
 
   const starTrekCharacters = [
     'james-t-kirk',
@@ -186,6 +189,7 @@ test('Bulk connections', async function () {
       onmessage: (e) => {
         var [key, value] = JSON.parse(e.data);
         if (key === '_acceptAuth') {
+          tokenCheck = value.token;
           didAuth++;
           return;
         }
@@ -210,6 +214,8 @@ test('Bulk connections', async function () {
   });
 
   await justWait(200);
+
+  expect(tokenCheck).toBe('123456');
 
   // check blocked messages
   connections.get('james-t-kirk').json(['send-all', ['blocked', 'value']]);
@@ -328,6 +334,8 @@ test('Bulk connections', async function () {
   expect(metaCheck1[0].meta.dead).toBe(undefined);
   expect(metaCheck1[1].meta.likable).toBe(true);
   expect(metaCheck1[0].meta.episode).toBe(undefined);
+
+ 
 
   await justWait(200);
 

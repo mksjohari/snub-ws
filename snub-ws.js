@@ -62,7 +62,6 @@ module.exports = function (config) {
           client.kick('IDLE_TIMEOUT', 1000);
         }
       });
-
     }, 1000 * 10);
 
     function instanceAlive() {
@@ -267,9 +266,12 @@ module.exports = function (config) {
       if (config.multiLogin) return;
       const clients = wsClients.clients(state.username);
       clients.forEach((client) => {
-        if (client.state.id !== state.id && client.state.connectTime <= state.connectTime) {
-          if(client.state.connectTime === state.connectTime)
-            if(client.state.id > state.id) return;
+        if (
+          client.state.id !== state.id &&
+          client.state.connectTime <= state.connectTime
+        ) {
+          if (client.state.connectTime === state.connectTime)
+            if (client.state.id > state.id) return;
           client.kick('DUPE_LOGIN', 3000);
         }
       });
@@ -489,9 +491,9 @@ class WsClient {
   }
 
   send(event, payload) {
+    if(this.#internal.authenticated === false) return;
     const sendString = JSON.stringify([event, payload]);
     const msgHash = hashString(sendString);
-
     // dont send the same message twice in a row within 3 seconds
     if (
       msgHash === this.#internal.lastMsgHash &&
@@ -557,7 +559,7 @@ class WsClient {
   kick(reason, code = 1000) {
     this.send('_kickConnection', reason);
     setTimeout((_) => {
-      this.#ws.end(code, 'Client Kicked: ' + reason);
+      this.#ws.end(code, reason);
     }, 100);
   }
 
@@ -565,13 +567,20 @@ class WsClient {
     if (this.#config.auth === false) return this.#acceptAuth(authPayload);
 
     const authObj = { ...this.state, ...authPayload };
+
+    const authCheck = (validAuthOrObj) => {
+      if (validAuthOrObj === false) return this.#denyAuth();
+      if (validAuthOrObj === true) return this.#acceptAuth(authPayload);
+      if (typeof validAuthOrObj === 'object') {
+        return this.#acceptAuth(authPayload, validAuthOrObj);
+      }
+      return this.#denyAuth();
+    };
+
     if (typeof this.#config.auth === 'string') {
       snub
         .mono('ws:' + this.#config.auth, authObj)
-        .replyAt((validAuth) => {
-          if (validAuth === true) return this.#acceptAuth(authPayload);
-          this.#denyAuth();
-        })
+        .replyAt(authCheck)
         .send((received) => {
           if (!received) {
             this.#denyAuth();
@@ -580,24 +589,22 @@ class WsClient {
     }
 
     if (typeof this.#config.auth === 'function') {
-      this.#config.auth(authObj, (res) => {
-        if (res === true) return this.#acceptAuth(authPayload);
-        return this.#denyAuth();
-      });
+      this.#config.auth(authObj, authCheck);
     }
   }
 
-  #acceptAuth(authPayload) {
+  #acceptAuth(authPayload, validAuthOrObj = {}) {
     this.#internal.authenticated = true;
     this.#internal.auth = authPayload;
     if (!this.#config.multiLogin && this.state.username)
       snub.poly('ws_internal:dedupe-client-check', this.state).send();
-    snub.mono('ws:client-authenticated', this.state).send();
+    
 
     setTimeout(
       () => {
         if (this.state.authenticated) {
-          this.send('_acceptAuth', this.state.id);
+          this.send('_acceptAuth', { _id: this.state.id, ...validAuthOrObj });
+          snub.mono('ws:client-authenticated', this.state).send();
         }
       },
       this.#config.multiLogin ? 0 : 100
