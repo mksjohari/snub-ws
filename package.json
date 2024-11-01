@@ -6,7 +6,8 @@
   "scripts": {
     "test": "jest --runInBand --forceExit",
     "redis": "docker run --rm --name redis-snub -d -p 6379:6379 redis:4.0-alpine",
-    "debug": "npx pm2 del all; npx pm2 start examples/websocket-server.js -i 4 && npx pm2 restart all && npx pm2 logs"
+    "debug": "npx pm2 del all; npx pm2 start examples/websocket-server.js -i 4 && npx pm2 restart all && npx pm2 logs",
+    "publish": "npm publish --tag beta"
   },
   "repository": {
     "type": "git",

@@ -437,15 +437,15 @@ class WsClient {
   }
 
   onMessage(message) {
+    let stringMessage;
     try {
-    const stringMessage = Buffer.from(message).toString();
-    message = JSON.parse(stringMessage);
+      stringMessage = Buffer.from(message).toString();
+      message = JSON.parse(stringMessage);
     } catch (error) {
       return;
     }
     if (!Array.isArray(message)) return;
     const [event, payload, reply] = message;
-    
 
     this.#internal.lastMsgTime = Date.now();
 
@@ -472,27 +472,31 @@ class WsClient {
       (Array.isArray(this.#config.includeRaw) &&
         this.#config.includeRaw.includes(event));
 
-    snub
-      .mono('ws:' + event, {
-        from: this.state,
-        payload,
-        _raw: includeRaw ? stringMessage : undefined,
-        _ts: Date.now(),
-      })
-      .replyAt(
-        reply
-          ? (data) => {
-              this.send(reply, data);
-            }
-          : undefined
-      )
-      .send((c) => {
-        if (c < 1 && reply) {
-          this.send(reply + ':error', {
-            error: 'Nothing was listening to this event',
-          });
-        }
-      });
+    try {
+      snub
+        .mono('ws:' + event, {
+          from: this.state,
+          payload,
+          _raw: includeRaw ? stringMessage : undefined,
+          _ts: Date.now(),
+        })
+        .replyAt(
+          reply
+            ? (data) => {
+                this.send(reply, data);
+              }
+            : undefined
+        )
+        .send((c) => {
+          if (c < 1 && reply) {
+            this.send(reply + ':error', {
+              error: 'Nothing was listening to this event',
+            });
+          }
+        });
+    } catch (error) {
+      console.error('Error sending event', event, error, message);
+    }
   }
 
   onClose(code, message) {
@@ -514,7 +518,7 @@ class WsClient {
     }
 
     this.#internal.lastMsgHash = msgHash;
-    if(this.#internal.closing) return;
+    if (this.#internal.closing) return;
     this.#ws.send(sendString);
   }
 
@@ -580,13 +584,14 @@ class WsClient {
     if (typeof authPayload !== 'object') return this.#denyAuth();
     if (!authPayload.username && !this.#config.multiLogin) {
       authPayload.username = this.state.id;
-      console.warn('Multilogin is set to false and no username provided, using client id as username, this will defeat the purpose of multilogin');
+      console.warn(
+        'Multilogin is set to false and no username provided, using client id as username, this will defeat the purpose of multilogin'
+      );
     }
 
     const authObj = { ...this.state, ...authPayload };
 
     const authCheck = (validAuthOrObj) => {
-      console.log('AuthCheck', validAuthOrObj);
       if (validAuthOrObj === false) return this.#denyAuth();
       if (validAuthOrObj === true) return this.#acceptAuth(authPayload);
       if (typeof validAuthOrObj === 'object') {

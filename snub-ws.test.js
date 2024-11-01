@@ -34,6 +34,7 @@ const snubws2 = new SnubWS({
   multiLogin: false,
   idleTimeout: 100,
   auth: auth,
+  includeRaw: true,
 });
 const snubws3 = new SnubWS({
   debug: false,
