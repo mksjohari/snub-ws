@@ -389,11 +389,11 @@ class WsClient {
     metaObj: {},
     auth: {},
     authenticated: false,
-    dead: false,
     recent: [],
     closing: false,
     wsMeta: {},
   };
+  #authTimeout;
 
   constructor(ws, config, clients) {
     this.#ws = ws;
@@ -418,6 +418,9 @@ class WsClient {
     if (config.auth === false) {
       this.#validateAuth(false);
     }
+    this.#authTimeout = setTimeout(() => {
+      if (!this.#internal.authenticated) this.kick('AUTH_TIMEOUT', 1000);
+    }, config.authTimeout);
   }
 
   get state() {
@@ -434,8 +437,15 @@ class WsClient {
   }
 
   onMessage(message) {
+    try {
     const stringMessage = Buffer.from(message).toString();
-    const [event, payload, reply] = JSON.parse(stringMessage);
+    message = JSON.parse(stringMessage);
+    } catch (error) {
+      return;
+    }
+    if (!Array.isArray(message)) return;
+    const [event, payload, reply] = message;
+    
 
     this.#internal.lastMsgTime = Date.now();
 
@@ -486,12 +496,13 @@ class WsClient {
   }
 
   onClose(code, message) {
+    this.#internal.closing = true;
     message = Buffer.from(message).toString();
     this.#clients.delete(this.#internal.id);
   }
 
   send(event, payload) {
-    if(this.#internal.authenticated === false) return;
+    if (this.#internal.authenticated === false) return;
     const sendString = JSON.stringify([event, payload]);
     const msgHash = hashString(sendString);
     // dont send the same message twice in a row within 3 seconds
@@ -503,6 +514,7 @@ class WsClient {
     }
 
     this.#internal.lastMsgHash = msgHash;
+    if(this.#internal.closing) return;
     this.#ws.send(sendString);
   }
 
@@ -565,10 +577,16 @@ class WsClient {
 
   #validateAuth(authPayload) {
     if (this.#config.auth === false) return this.#acceptAuth(authPayload);
+    if (typeof authPayload !== 'object') return this.#denyAuth();
+    if (!authPayload.username && !this.#config.multiLogin) {
+      authPayload.username = this.state.id;
+      console.warn('Multilogin is set to false and no username provided, using client id as username, this will defeat the purpose of multilogin');
+    }
 
     const authObj = { ...this.state, ...authPayload };
 
     const authCheck = (validAuthOrObj) => {
+      console.log('AuthCheck', validAuthOrObj);
       if (validAuthOrObj === false) return this.#denyAuth();
       if (validAuthOrObj === true) return this.#acceptAuth(authPayload);
       if (typeof validAuthOrObj === 'object') {
@@ -583,6 +601,7 @@ class WsClient {
         .replyAt(authCheck)
         .send((received) => {
           if (!received) {
+            console.error('Auth event provided was not listening.', received);
             this.#denyAuth();
           }
         });
@@ -598,7 +617,6 @@ class WsClient {
     this.#internal.auth = authPayload;
     if (!this.#config.multiLogin && this.state.username)
       snub.poly('ws_internal:dedupe-client-check', this.state).send();
-    
 
     setTimeout(
       () => {
@@ -612,6 +630,7 @@ class WsClient {
   }
 
   #denyAuth() {
+    clearTimeout(this.#authTimeout);
     this.#internal.authenticated = false;
     this.kick('AUTH_FAIL', 3000);
     snub.mono('ws:client-failedauth', this.state).send();

@@ -28,7 +28,7 @@
   "devDependencies": {
     "jest": "^24.9.0",
     "prettier": "^2.3.1",
-    "snub": "^3.0.2",
+    "snub": "^4.0.0-beta.0",
     "ws": "^8.12.1"
   }
 }

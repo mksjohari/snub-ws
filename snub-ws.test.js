@@ -151,6 +151,12 @@ test('Bulk connections', async function () {
   let blockCheck = 0;
   let tokenCheck = '';
 
+  let doubleMe = 0;
+
+  snub.on('ws:double-me', async (event, reply) => {
+    reply(event.payload * 2);
+  });
+
   const starTrekCharacters = [
     'james-t-kirk',
     'spock',
@@ -191,6 +197,8 @@ test('Bulk connections', async function () {
         if (key === '_acceptAuth') {
           tokenCheck = value.token;
           didAuth++;
+
+          socketClient.json(['double-me', 6, 'qwerty456']);
           return;
         }
         if (key === 'send-all-test') {
@@ -206,6 +214,11 @@ test('Bulk connections', async function () {
           return;
         }
 
+        if (key === 'qwerty456') {
+          doubleMe = value;
+          return;
+        }
+
         console.log('Message:', key, value);
       },
       onerror: (e) => console.warn('Error:', e),
@@ -216,6 +229,7 @@ test('Bulk connections', async function () {
   await justWait(200);
 
   expect(tokenCheck).toBe('123456');
+  expect(doubleMe).toBe(12);
 
   // check blocked messages
   connections.get('james-t-kirk').json(['send-all', ['blocked', 'value']]);
