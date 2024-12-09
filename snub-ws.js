@@ -440,7 +440,7 @@ class WsClient {
     let stringMessage;
     try {
       stringMessage = Buffer.from(message).toString();
-      message = JSON.parse(stringMessage);
+      message = snub.parseJson(stringMessage);
     } catch (error) {
       return;
     }
@@ -490,7 +490,7 @@ class WsClient {
         .send((c) => {
           if (c < 1 && reply) {
             this.send(reply + ':error', {
-              error: 'Nothing was listening to this event',
+              error: `Nothing was listening to this event [ws:${event}] `,
             });
           }
         });
@@ -507,7 +507,7 @@ class WsClient {
 
   send(event, payload) {
     if (this.#internal.authenticated === false) return;
-    const sendString = JSON.stringify([event, payload]);
+    const sendString = snub.stringifyJson([event, payload]);
     const msgHash = hashString(sendString);
     // dont send the same message twice in a row within 3 seconds
     if (
