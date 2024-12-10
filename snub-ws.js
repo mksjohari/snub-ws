@@ -575,7 +575,12 @@ class WsClient {
   kick(reason, code = 1000) {
     this.send('_kickConnection', reason);
     setTimeout((_) => {
-      this.#ws.end(code, reason);
+      try {
+        this.#ws.end(code, reason);
+      } catch (error) {
+        // already closed
+      }
+      
     }, 100);
   }
 
