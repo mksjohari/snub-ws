@@ -230,12 +230,9 @@ module.exports = function (config) {
 
     async function getAllConnectedClientStates(idsOrUsernames) {
       var instances = await aliveInstances();
-      console.log('instances', instances);
       const instancesClients = await snub
         .poly('ws_internal:connected-clients', idsOrUsernames)
         .awaitReply(1000, instances.length);
-
-      console.log('instancesClients', instancesClients);
 
       if (instancesClients.length < instances.length) 
         console.warn('Snub-Ws: Not all instances replied to ws_internal:connected-clients', instancesClients.length, instances.length);
