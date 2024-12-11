@@ -92,6 +92,7 @@ module.exports = function (config) {
           : uWS.SHARED_COMPRESSOR,
         maxPayloadLength: 16 * 1024 * 1024,
         idleTimeout: config.idleTimeout / 1000,
+        //maxBackpressure: 2 * 1024 * 1024,
         /* Handlers */
         upgrade: (res, req, ctx) => {
           let basicAuth = false;
@@ -228,6 +229,7 @@ module.exports = function (config) {
 
     async function getAllConnectedClientStates(idsOrUsernames) {
       var instances = await aliveInstances();
+      console.info('Snub-WS instances:', instances);
       const instancesClients = await snub
         .poly('ws_internal:connected-clients', idsOrUsernames)
         .awaitReply(1000, instances.length);
@@ -519,7 +521,10 @@ class WsClient {
 
     this.#internal.lastMsgHash = msgHash;
     if (this.#internal.closing) return;
-    this.#ws.send(sendString);
+    
+    if(!this.#ws.send(sendString)) {
+      console.warn('Backpressure detected');
+    };
   }
 
   setMeta(metaObj) {
