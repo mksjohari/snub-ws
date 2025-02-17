@@ -12,6 +12,8 @@ const DEFAULT_CONFIG = {
   includeRaw: false, // for including raw client messages, debug purposes only.
   error: (_) => {},
   internalWsEvents: [],
+  maxBackpressure: 1 * 1024 * 1024, // memory limit for backpressure
+  offloadToHttpSize: 0.5 * 1024 * 1024, // if message is larger than this, offload to http
 };
 
 let snub;
@@ -22,6 +24,8 @@ module.exports = function (config) {
   };
   config.idleTimeout = Math.max(config.idleTimeout, 1000 * 60 * 5); // min 5 minute on idle timeout
   config.idleTimeout = Math.min(959000, config.idleTimeout);
+
+  config.offloadToHttpSize = config.offloadToHttpSize < 1 ? null : config.offloadToHttpSize;
 
   if (config.debug) console.log('Snub-ws Init', config);
 
@@ -83,8 +87,28 @@ module.exports = function (config) {
       return instances;
     }
 
+    process.on('SIGINT', async (_) => {
+      await snub.redis.zrem('_snubws_instance', config.instanceId);
+      process.exit(0);
+    });
+
     const socketServer = uWS
       .App()
+      .get('/*', async (res, req) => {
+        // Retrieve the raw query string
+        const query = req.getQuery(); // For example: "offload=1233"
+
+        // Parse the query string into a usable object
+        const params = Object.fromEntries(new URLSearchParams(query));
+        res.end(JSON.stringify(params));
+        if (params.offload) {
+          const offloadId = params.offload;
+          const offloadData = await snub.redi.get(
+            '_snubws_offload:' + offloadId
+          );
+          res.end(offloadData);
+        }
+      })
       .ws('/*', {
         /* Options */
         compression: config.compression
@@ -137,6 +161,7 @@ module.exports = function (config) {
           return ws.wsClient.onMessage(message);
         },
         drain: (ws) => {
+          ws.wsClient.onDrain();
           // need to work out if this is useful for anything.
           // console.log('WebSocket back pressure: ' + ws.getBufferedAmount());
         },
@@ -234,8 +259,12 @@ module.exports = function (config) {
         .poly('ws_internal:connected-clients', idsOrUsernames)
         .awaitReply(1000, instances.length);
 
-      if (instancesClients.length < instances.length) 
-        console.warn('Snub-Ws: Not all instances replied to ws_internal:connected-clients', instancesClients.length, instances.length);
+      if (instancesClients.length < instances.length)
+        console.warn(
+          'Snub-Ws: Not all instances replied to ws_internal:connected-clients',
+          instancesClients.length,
+          instances.length
+        );
       const clients = [];
       instancesClients.forEach((instance) => {
         clients.push(...instance[1]);
@@ -400,6 +429,7 @@ class WsClient {
     wsMeta: {},
   };
   #authTimeout;
+  #messageQueue = [];
 
   constructor(ws, config, clients) {
     this.#ws = ws;
@@ -505,6 +535,20 @@ class WsClient {
     }
   }
 
+  onDrain() {
+    console.log('Snub-Ws: Drain');
+    while (this.#messageQueue.length > 0) {
+      const message = this.#messageQueue.shift();
+      if (!this.#ws.send(message)) {
+        console.warn(
+          'Snub-WS: Backpressure detected again. Re-queuing message.'
+        );
+        this.#messageQueue.unshift(message);
+        break; // Stop trying to send if backpressure returns
+      }
+    }
+  }
+
   onClose(code, message) {
     this.#internal.closing = true;
     message = Buffer.from(message).toString();
@@ -514,6 +558,7 @@ class WsClient {
   send(event, payload) {
     if (this.#internal.authenticated === false) return;
     const sendString = snub.stringifyJson([event, payload]);
+
     const msgHash = hashString(sendString);
     // dont send the same message twice in a row within 3 seconds
     if (
@@ -525,10 +570,31 @@ class WsClient {
 
     this.#internal.lastMsgHash = msgHash;
     if (this.#internal.closing) return;
-    
-    if(!this.#ws.send(sendString)) {
-      console.warn('Backpressure detected');
-    };
+
+    if (
+      config.offloadToHttpSize &&
+      Buffer.byteLength(sendString, 'utf8') > this.#config.offloadToHttpSize
+    ) {
+      console.log('Snub-Ws: Offloading to HTTP', event, sendString.length);
+      // const offloadId = snub.generateUID();
+      // snub.redi.set(
+      //   '_snubws_offload:' + offloadId,
+      //   sendString,
+      //   'EX',
+      //   30
+      // );
+      // this.#ws.send('_offload', offloadId);
+      // return;
+    }
+
+    if (!this.#ws.send(sendString)) {
+      console.warn(
+        'Snub-Ws: Backpressure detected',
+        event,
+        this.#ws.getBufferedAmount()
+      );
+      this.#messageQueue.push(sendString);
+    }
   }
 
   setMeta(metaObj) {
@@ -589,7 +655,6 @@ class WsClient {
       } catch (error) {
         // already closed
       }
-      
     }, 100);
   }
 
@@ -605,7 +670,10 @@ class WsClient {
 
     const authObj = { ...this.state, ...authPayload };
 
-    const authCheck = (validAuthOrObj) => {
+    const authCheck = (validAuthOrObj, err) => {
+      if (err) {
+        console.error('Snub-WS: AuthCheck Error', err);
+      }
       if (validAuthOrObj === false) return this.#denyAuth();
       if (validAuthOrObj === true) return this.#acceptAuth(authPayload);
       if (typeof validAuthOrObj === 'object') {
@@ -620,7 +688,12 @@ class WsClient {
         .replyAt(authCheck)
         .send((received) => {
           if (!received) {
-            console.error('Auth event provided was not listening.', received);
+            console.error(
+              `Snub-Ws:Auth event provided was not listening. ${
+                this.#config.auth
+              }`,
+              received
+            );
             this.#denyAuth();
           }
         });
