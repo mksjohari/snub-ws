@@ -1,6 +1,6 @@
 {
   "name": "snub-ws",
-  "version": "3.1.4",
+  "version": "3.1.5",
   "description": "WebSocket server middleware for snub",
   "main": "snub-ws.js",
   "scripts": {
@@ -23,7 +23,7 @@
   },
   "homepage": "https://github.com/cokeeffekt/snub-ws#readme",
   "dependencies": {
-    "uWebSockets.js": "github:unetworking/uwebsockets.js#v20.21.0"
+    "uWebSockets.js": "github:unetworking/uwebsockets.js#v20.51.0"
   },
   "devDependencies": {
     "jest": "^24.9.0",
