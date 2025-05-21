@@ -24,7 +24,7 @@
   },
   "homepage": "https://github.com/cokeeffekt/snub-ws#readme",
   "dependencies": {
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.48.0"
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.51.0"
   },
   "devDependencies": {
     "jest": "^29.7.0",
