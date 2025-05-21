@@ -25,7 +25,8 @@ module.exports = function (config) {
   config.idleTimeout = Math.max(config.idleTimeout, 1000 * 60 * 5); // min 5 minute on idle timeout
   config.idleTimeout = Math.min(959000, config.idleTimeout);
 
-  config.offloadToHttpSize = config.offloadToHttpSize < 1 ? null : config.offloadToHttpSize;
+  config.offloadToHttpSize =
+    config.offloadToHttpSize < 1 ? null : config.offloadToHttpSize;
 
   if (config.debug) console.log('Snub-ws Init', config);
 
@@ -94,19 +95,42 @@ module.exports = function (config) {
 
     const socketServer = uWS
       .App()
-      .get('/*', async (res, req) => {
+      .get('/*', (res, req) => {
+        res.onAborted(() => {
+          console.log('Request aborted');
+        });
         // Retrieve the raw query string
         const query = req.getQuery(); // For example: "offload=1233"
 
         // Parse the query string into a usable object
         const params = Object.fromEntries(new URLSearchParams(query));
-        res.end(JSON.stringify(params));
+        // return res.end(JSON.stringify(params));
+
+        function fail() {
+          if (res.aborted) return;
+          res.writeHeader('Content-Type', 'text/plain');
+          res.writeStatus('404 Not Found');
+          res.end('404: Route not found');
+        }
+
         if (params.offload) {
           const offloadId = params.offload;
-          const offloadData = await snub.redi.get(
-            '_snubws_offload:' + offloadId
-          );
-          res.end(offloadData);
+          snub.redis
+            .get('_snubws_offload:' + offloadId)
+            .then((offloadData) => {
+              if (res.aborted) return;
+              if (offloadData) {
+                res.writeHeader('Content-Type', 'application/json');
+                res.end(offloadData);
+                return;
+              }
+              fail();
+            })
+            .catch((error) => {
+              fail();
+            });
+        } else {
+          fail();
         }
       })
       .ws('/*', {
@@ -572,19 +596,14 @@ class WsClient {
     if (this.#internal.closing) return;
 
     if (
-      config.offloadToHttpSize &&
+      this.#config.offloadToHttpSize &&
       Buffer.byteLength(sendString, 'utf8') > this.#config.offloadToHttpSize
     ) {
       console.log('Snub-Ws: Offloading to HTTP', event, sendString.length);
-      // const offloadId = snub.generateUID();
-      // snub.redi.set(
-      //   '_snubws_offload:' + offloadId,
-      //   sendString,
-      //   'EX',
-      //   30
-      // );
-      // this.#ws.send('_offload', offloadId);
-      // return;
+      const offloadId = snub.generateUID();
+      snub.redis.set('_snubws_offload:' + offloadId, sendString, 'EX', 30);
+      this.#ws.send(snub.stringifyJson(['_offload', offloadId]));
+      return;
     }
 
     if (!this.#ws.send(sendString)) {
