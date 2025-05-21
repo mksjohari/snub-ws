@@ -1,12 +1,13 @@
 {
   "name": "snub-ws",
-  "version": "3.1.6",
+  "version": "4.1.0",
   "description": "WebSocket server middleware for snub",
   "main": "snub-ws.js",
   "scripts": {
     "test": "jest --runInBand --forceExit",
     "redis": "docker run --rm --name redis-snub -d -p 6379:6379 redis:4.0-alpine",
-    "debug": "npx pm2 del all; npx pm2 start examples/websocket-server.js -i 4 && npx pm2 restart all && npx pm2 logs"
+    "debug": "npx pm2 del all; npx pm2 start examples/websocket-server.js -i 4 && npx pm2 restart all && npx pm2 logs",
+    "publish": "npm publish"
   },
   "repository": {
     "type": "git",
@@ -23,12 +24,12 @@
   },
   "homepage": "https://github.com/cokeeffekt/snub-ws#readme",
   "dependencies": {
-    "uWebSockets.js": "github:unetworking/uwebsockets.js#v20.51.0"
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.51.0"
   },
   "devDependencies": {
-    "jest": "^24.9.0",
+    "jest": "^29.7.0",
     "prettier": "^2.3.1",
-    "snub": "^3.0.2",
+    "snub": "^4.1.0",
     "ws": "^8.12.1"
   }
 }
