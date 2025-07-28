@@ -158,6 +158,19 @@ test('Bulk connections', async function () {
     reply(event.payload * 2);
   });
 
+
+  let disconnectCount = 0;
+  snub.on('ws:client-disconnected', async (event, reply) => {
+    disconnectCount++;
+    // console.log('Client disconnected:', event.payload)
+  }
+  );
+  let updateCount = 0;
+  snub.on('ws:client-updated', async (event, reply) => {
+    updateCount++;
+  }
+  );
+
   const starTrekCharacters = [
     'james-t-kirk',
     'spock',
@@ -366,6 +379,9 @@ test('Bulk connections', async function () {
   expect(trekClients.length).toBe(16);
 
   expect(didAuth).toBe(22);
+
+  expect(disconnectCount).toBe(6);
+  expect(updateCount).toBe(11);
 }, 15000);
 
 // helper functions

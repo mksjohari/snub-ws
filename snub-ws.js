@@ -577,6 +577,7 @@ class WsClient {
     this.#internal.closing = true;
     message = Buffer.from(message).toString();
     this.#clients.delete(this.#internal.id);
+    snub.mono('ws:client-disconnected', this.state).send();
   }
 
   send(event, payload) {
@@ -647,6 +648,7 @@ class WsClient {
       }
     });
     this.#internal.metaObj = newMeta;
+    snub.mono('ws:client-updated', this.state).send();
   }
 
   addChannel(arrayOfChannels) {
